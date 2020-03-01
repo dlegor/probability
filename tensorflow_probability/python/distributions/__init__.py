@@ -24,6 +24,7 @@ from tensorflow_probability.python.distributions.autoregressive import Autoregre
 from tensorflow_probability.python.distributions.batch_reshape import BatchReshape
 from tensorflow_probability.python.distributions.bernoulli import Bernoulli
 from tensorflow_probability.python.distributions.beta import Beta
+from tensorflow_probability.python.distributions.beta_binomial import BetaBinomial
 from tensorflow_probability.python.distributions.binomial import Binomial
 from tensorflow_probability.python.distributions.blockwise import Blockwise
 from tensorflow_probability.python.distributions.categorical import Categorical
@@ -49,6 +50,7 @@ from tensorflow_probability.python.distributions.geometric import Geometric
 from tensorflow_probability.python.distributions.gumbel import Gumbel
 from tensorflow_probability.python.distributions.half_cauchy import HalfCauchy
 from tensorflow_probability.python.distributions.half_normal import HalfNormal
+from tensorflow_probability.python.distributions.half_student_t import HalfStudentT
 from tensorflow_probability.python.distributions.hidden_markov_model import HiddenMarkovModel
 from tensorflow_probability.python.distributions.horseshoe import Horseshoe
 from tensorflow_probability.python.distributions.independent import Independent
@@ -56,8 +58,11 @@ from tensorflow_probability.python.distributions.inverse_gamma import InverseGam
 from tensorflow_probability.python.distributions.inverse_gaussian import InverseGaussian
 from tensorflow_probability.python.distributions.joint_distribution import JointDistribution
 from tensorflow_probability.python.distributions.joint_distribution_coroutine import JointDistributionCoroutine
+from tensorflow_probability.python.distributions.joint_distribution_auto_batched import JointDistributionCoroutineAutoBatched
 from tensorflow_probability.python.distributions.joint_distribution_named import JointDistributionNamed
+from tensorflow_probability.python.distributions.joint_distribution_auto_batched import JointDistributionNamedAutoBatched
 from tensorflow_probability.python.distributions.joint_distribution_sequential import JointDistributionSequential
+from tensorflow_probability.python.distributions.joint_distribution_auto_batched import JointDistributionSequentialAutoBatched
 from tensorflow_probability.python.distributions.kumaraswamy import Kumaraswamy
 from tensorflow_probability.python.distributions.laplace import Laplace
 from tensorflow_probability.python.distributions.linear_gaussian_ssm import LinearGaussianStateSpaceModel
@@ -77,6 +82,7 @@ from tensorflow_probability.python.distributions.mvn_tril import MultivariateNor
 from tensorflow_probability.python.distributions.negative_binomial import NegativeBinomial
 from tensorflow_probability.python.distributions.normal import Normal
 from tensorflow_probability.python.distributions.onehot_categorical import OneHotCategorical
+from tensorflow_probability.python.distributions.ordered_logistic import OrderedLogistic
 from tensorflow_probability.python.distributions.pareto import Pareto
 from tensorflow_probability.python.distributions.pert import PERT
 from tensorflow_probability.python.distributions.pixel_cnn import PixelCNN
@@ -99,8 +105,6 @@ from tensorflow_probability.python.distributions.uniform import Uniform
 from tensorflow_probability.python.distributions.variational_gaussian_process import VariationalGaussianProcess
 from tensorflow_probability.python.distributions.vector_diffeomixture import VectorDiffeomixture
 from tensorflow_probability.python.distributions.vector_exponential_diag import VectorExponentialDiag
-from tensorflow_probability.python.distributions.vector_laplace_diag import VectorLaplaceDiag
-from tensorflow_probability.python.distributions.vector_sinh_arcsinh_diag import VectorSinhArcsinhDiag
 from tensorflow_probability.python.distributions.von_mises import VonMises
 from tensorflow_probability.python.distributions.von_mises_fisher import VonMisesFisher
 from tensorflow_probability.python.distributions.wishart import WishartLinearOperator
@@ -131,7 +135,8 @@ augment_kl_xent_docs(_sys.modules[__name__])
 del augment_kl_xent_docs
 del _sys
 
-# pylint: enable=unused-import,wildcard-import,line-too-long,g-importing-member,g-bad-import-order
+# pylint: enable=unused-import,wildcard-import,g-importing-member,g-bad-import-order
+# pylint: enable=line-too-long
 
 __all__ = [
     'FULLY_REPARAMETERIZED',
@@ -142,6 +147,7 @@ __all__ = [
     'BatchReshape',
     'Bernoulli',
     'Beta',
+    'BetaBinomial',
     'Binomial',
     'Blockwise',
     'Categorical',
@@ -166,14 +172,18 @@ __all__ = [
     'Gumbel',
     'HalfCauchy',
     'HalfNormal',
+    'HalfStudentT',
     'HiddenMarkovModel',
     'Horseshoe',
     'Independent',
     'InverseGamma',
     'JointDistribution',
     'JointDistributionCoroutine',
+    'JointDistributionCoroutineAutoBatched',
     'JointDistributionNamed',
+    'JointDistributionNamedAutoBatched',
     'JointDistributionSequential',
+    'JointDistributionSequentialAutoBatched',
     'Kumaraswamy',
     'LinearGaussianStateSpaceModel',
     'Laplace',
@@ -204,8 +214,6 @@ __all__ = [
     'DirichletMultinomial',
     'Multinomial',
     'VectorDiffeomixture',
-    'VectorLaplaceDiag',
-    'VectorSinhArcsinhDiag',
     'VonMises',
     'VonMisesFisher',
     'WishartLinearOperator',
@@ -216,6 +224,7 @@ __all__ = [
     'MixtureSameFamily',
     'ExpRelaxedOneHotCategorical',
     'OneHotCategorical',
+    'OrderedLogistic',
     'Pareto',
     'PERT',
     'PlackettLuce',

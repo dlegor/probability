@@ -41,28 +41,27 @@ TF_REPLACEMENTS = {
     'import tensorflow_probability as tfp':
         'import tensorflow_probability as tfp; '
         'tfp = tfp.experimental.substrates.numpy',
+    'from tensorflow.python.ops.linalg':
+        'from tensorflow_probability.python.internal.backend.numpy'
 }
 
 DISABLED_BY_PKG = {
     'bijectors':
         ('masked_autoregressive', 'scale_matvec_lu', 'real_nvp'),
     'distributions':
-        ('joint_distribution', 'joint_distribution_coroutine',
-         'joint_distribution_named', 'joint_distribution_sequential',
-         'internal.moving_stats'),
+        ('internal.moving_stats',),
     'math':
-        ('ode', 'diag_jacobian',
-         'interpolation', 'minimize', 'root_search', 'sparse'),
+        ('ode', 'minimize', 'sparse'),
     'mcmc':
         ('nuts', 'sample_annealed_importance', 'sample_halton_sequence',
          'slice_sampler_kernel'),
-    'stats':
-        ('calibration', 'quantiles', 'ranking', 'sample_stats')
 }
 LIBS = ('bijectors', 'distributions', 'math', 'mcmc', 'stats', 'util')
-INTERNALS = ('assert_util', 'distribution_util', 'dtype_util',
-             'hypothesis_testlib', 'prefer_static', 'special_math',
-             'tensor_util', 'test_combinations', 'test_util')
+INTERNALS = ('assert_util', 'batched_rejection_sampler', 'distribution_util',
+             'dtype_util', 'hypothesis_testlib', 'prefer_static',
+             'special_math', 'tensor_util', 'test_combinations', 'test_util')
+
+PRIVATE_TF_PKGS = ('array_ops', 'random_ops')
 
 
 def main(argv):
@@ -114,6 +113,15 @@ def main(argv):
       'tensorflow_probability.python.internal._numpy import {}'.format(internal)
       for internal in INTERNALS
   })
+  # pylint: disable=g-complex-comprehension
+  replacements.update({
+      'tensorflow.python.ops import {}'.format(private):
+      'tensorflow_probability.python.internal.backend.numpy import private'
+      ' as {}'.format(private)
+      for private in PRIVATE_TF_PKGS
+  })
+  # pylint: enable=g-complex-comprehension
+
   replacements.update({
       'self._maybe_assert_dtype': '# self._maybe_assert_dtype',
       'SKIP_DTYPE_CHECKS = False': 'SKIP_DTYPE_CHECKS = True',
@@ -160,12 +168,15 @@ def main(argv):
       contents = contents.replace(
           '\nimport numpy as np',
           '\nimport numpy as onp\nimport jax.numpy as np')
-      contents = contents.replace('np.generic', 'onp.generic')
       contents = contents.replace('np.bool', 'onp.bool')
       contents = contents.replace('np.dtype', 'onp.dtype')
-      contents = contents.replace('np.unique', 'onp.unique')
       contents = contents.replace('np.euler_gamma', 'onp.euler_gamma')
+      contents = contents.replace('np.generic', 'onp.generic')
       contents = contents.replace('np.nextafter', 'onp.nextafter')
+      contents = contents.replace('np.object', 'onp.object')
+      contents = contents.replace('np.unique', 'onp.unique')
+
+      contents = contents.replace('np.polynomial', 'onp.polynomial')
     if is_test(argv[1]):  # Test-only rewrites.
       contents = contents.replace(
           'tf.test.main()',

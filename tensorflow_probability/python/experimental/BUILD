@@ -15,6 +15,8 @@
 # Description:
 #   API-unstable code that is part of the TFP package.
 
+# [internal] load python3.bzl
+
 package(
     default_visibility = [
         "//tensorflow_probability:__subpackages__",
@@ -30,12 +32,35 @@ py_library(
     srcs = ["__init__.py"],
     srcs_version = "PY2AND3",
     deps = [
+        ":composite_tensor",
         "//tensorflow_probability/python/experimental/auto_batching",
         "//tensorflow_probability/python/experimental/edward2",
         "//tensorflow_probability/python/experimental/linalg",
         "//tensorflow_probability/python/experimental/marginalize",
         "//tensorflow_probability/python/experimental/mcmc",
+        "//tensorflow_probability/python/experimental/nn",
         "//tensorflow_probability/python/experimental/substrates",
         "//tensorflow_probability/python/experimental/vi",
+    ],
+)
+
+py_library(
+    name = "composite_tensor",
+    srcs = ["composite_tensor.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        # tensorflow dep,
+        "//tensorflow_probability/python/distributions",
+    ],
+)
+
+py_test(
+    name = "composite_tensor_test",
+    srcs = ["composite_tensor_test.py"],
+    deps = [
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability",
+        "//tensorflow_probability/python/internal:test_util",
     ],
 )

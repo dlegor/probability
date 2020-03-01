@@ -23,7 +23,6 @@ import functools
 
 import tensorflow.compat.v2 as tf
 
-from tensorflow_probability.python.distributions import distribution as distribution_lib
 from tensorflow_probability.python.distributions import joint_distribution as joint_distribution_lib
 from tensorflow_probability.python.distributions import kullback_leibler
 from tensorflow_probability.python.internal import distribution_util
@@ -224,6 +223,10 @@ class JointDistributionSequential(joint_distribution_lib.JointDistribution):
       # Check valid structure.
       self._model_unflatten(self._model_flatten(model))
 
+  @property
+  def model(self):
+    return self._model
+
   def _build(self, model):
     """Creates `dist_fn`, `dist_fn_wrapped`, `dist_fn_args`."""
     if not isinstance(model, collections.Sequence):
@@ -234,12 +237,18 @@ class JointDistributionSequential(joint_distribution_lib.JointDistribution):
         _unify_call_signature(i, dist_fn)
         for i, dist_fn in enumerate(model)])
 
+  def _model_coroutine(self):
+    xs = []
+    for dist_fn in self._dist_fn_wrapped:
+      x = yield dist_fn(*xs)
+      xs.append(x)
+
   def _flat_sample_distributions(self, sample_shape=(), seed=None, value=None):
     # This function additionally depends on:
     #   self._dist_fn_wrapped
     #   self._dist_fn_args
     #   self._always_use_specified_sample_shape
-    seed = SeedStream('JointDistributionSequential', seed)
+    seed = SeedStream(seed, salt='JointDistributionSequential')
     ds = []
     xs = [None]*len(self._dist_fn_wrapped) if value is None else list(value)
     if len(xs) != len(self._dist_fn_wrapped):
@@ -437,15 +446,6 @@ class JointDistributionSequential(joint_distribution_lib.JointDistribution):
         dfn.append(_sliced_maker(d))
     return self.copy(model=self._model_unflatten(dfn))
 
-  def _default_event_space_bijector(self):
-    if not all(
-        isinstance(d, distribution_lib.Distribution) for d in self.model):
-      raise NotImplementedError(
-          '_default_event_space_bijector` is implemented only for instances'
-          ' of `JointDistributionSequential` for which all elements of `model` '
-          'are `tfp.distribution`s (not callables).')
-    return [d._experimental_default_event_space_bijector() for d in self.model]  # pylint: disable=protected-access
-
 
 def _unify_call_signature(i, dist_fn):
   """Creates `dist_fn_wrapped` which calls `dist_fn` with all prev nodes.
@@ -457,7 +457,7 @@ def _unify_call_signature(i, dist_fn):
 
   Returns:
     dist_fn_wrapped: Python `callable` which takes all previous distributions
-      (in non reverse order) and produces a  new distribution instance.
+      (in non reverse order) and produces a new distribution instance.
     args: `tuple` of `str` representing the arg names of `dist_fn` (and in non
       wrapped, "natural" order). `None` is returned only if the input is not a
       `callable`.

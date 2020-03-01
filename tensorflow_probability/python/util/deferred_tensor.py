@@ -256,8 +256,7 @@ class DeferredTensor(tf.Module):
     # ValueError: Graph parent item 0 is not a Tensor;
     #   <DeferredTensor: dtype=float32, shape=[2], fn=exp>.
     # TODO(b/140157055): Remove this shim after LinOp is patched in 2.0.
-    if not JAX_MODE:
-      self.is_tensor_like = True
+    self.is_tensor_like = True
 
   @property
   def transform_fn(self):
@@ -288,6 +287,14 @@ class DeferredTensor(tf.Module):
   def name(self):
     """The string name of this object."""
     return self._name
+
+  def numpy(self):
+    """Returns (copy of) deferred values as a NumPy array or scalar."""
+    value = self._value()
+    if not hasattr(value, 'numpy'):
+      raise NotImplementedError(
+          'DeferredTensor.numpy() is only supported in eager execution mode.')
+    return value.numpy()
 
   def set_shape(self, shape):
     """Updates the shape of this pretransformed_input.
@@ -350,7 +357,7 @@ class DeferredTensor(tf.Module):
 
 
 class TransformedVariable(DeferredTensor):
-  """Variable tracking object which applies function upon `convert_to_tensor`.
+  """Variable tracking object which applies a bijector upon `convert_to_tensor`.
 
   #### Example
 
@@ -488,3 +495,17 @@ class TransformedVariable(DeferredTensor):
         use_locking=use_locking,
         name=name,
         read_value=read_value)
+
+
+if JAX_MODE:
+
+  def DeferredTensor(pretransformed_input, transform_fn,  # pylint: disable=function-redefined,invalid-name
+                     dtype=None, shape='None', name=None):  # pylint: disable=unused-argument
+    # DeferredTensor is used to address tape-safety issues in TF2
+    # which do not exist in the JAX backend
+    # so it is safe to evaluate the function immediately
+    return transform_fn(pretransformed_input)
+
+  def TransformedVariable(initial_value, bijector,  # pylint: disable=unused-argument,function-redefined,invalid-name
+                          dtype=None, name=None, **kwargs):  # pylint: disable=unused-argument
+    return DeferredTensor(initial_value, bijector)

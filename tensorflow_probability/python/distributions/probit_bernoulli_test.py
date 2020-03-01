@@ -27,7 +27,6 @@ import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
 
-from tensorflow_probability.python.internal import special_math
 from tensorflow_probability.python.internal import tensorshape_util
 from tensorflow_probability.python.internal import test_util
 
@@ -237,6 +236,8 @@ class ProbitBernoulliTest(test_util.TestCase):
     x = dist.sample(1, seed=test_util.test_seed())
     self.assertAllEqual((1, 2), tensorshape_util.as_list(x.shape))
 
+  @test_util.jax_disable_test_missing_functionality(
+      'JAX does not return None for gradients.')
   def testNotReparameterized(self):
     p = tf.constant([0.2, 0.6])
     _, grad_p = tfp.math.value_and_gradient(
@@ -254,7 +255,7 @@ class ProbitBernoulliTest(test_util.TestCase):
     def _seed(seed=None):
       seed = test_util.test_seed() if seed is None else seed
       if tf.executing_eagerly():
-        tf1.set_random_seed(seed)
+        tf.random.set_seed(seed)
       return seed
     seed = _seed()
     self.assertAllEqual(
@@ -307,7 +308,7 @@ class ProbitBernoulliTest(test_util.TestCase):
     x = tf.constant([-1., 0.5, 1.])
     d = tfd.ProbitBernoulli(probits=x, validate_args=True)
     self.assertAllClose(
-        *self.evaluate([special_math.ndtri(d.prob(1.)),
+        *self.evaluate([tf.math.ndtri(d.prob(1.)),
                         d.probits_parameter()]),
         atol=0,
         rtol=1e-4)
@@ -318,7 +319,7 @@ class ProbitBernoulliTest(test_util.TestCase):
     x = tf.constant([0.1, 0.5, 0.4])
     d = tfd.ProbitBernoulli(probs=x, validate_args=True)
     self.assertAllClose(
-        *self.evaluate([special_math.ndtri(d.prob(1.)),
+        *self.evaluate([tf.math.ndtri(d.prob(1.)),
                         d.probits_parameter()]),
         atol=0,
         rtol=1e-4)

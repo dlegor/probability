@@ -22,12 +22,10 @@ NO_REWRITE_NEEDED = [
     "internal:reparameterization",
     "internal:tensorshape_util",
     "layers",
-    "math:diag_jacobian",
-    "math:interpolation",
     "math:minimize",
-    "math:root_search",
     "math:sparse",
     "math/ode",
+    "optimizer/convergence_criteria",
     "platform_google",
 ]
 
@@ -68,6 +66,12 @@ def _substrate_deps(deps, substrate):
     if backend_dep not in new_deps:
         new_deps.append(backend_dep)
     return new_deps
+
+# This is needed for the transitional period during which we have the internal
+# py2and3_test and py_test comingling in BUILD files. Otherwise the OSS export
+# rewrite process becomes irreversible.
+def py3_test(*args, **kwargs):
+    native.py_test(*args, **kwargs)
 
 def multi_substrate_py_library(
         name,
@@ -191,7 +195,7 @@ def multi_substrate_py_test(
         cmd = "$(location {}) $(SRCS) > $@".format(REWRITER_TARGET),
         tools = [REWRITER_TARGET],
     )
-    native.py_test(
+    py3_test(
         name = "{}.numpy".format(name),
         size = size,
         srcs = numpy_srcs,
@@ -199,6 +203,7 @@ def multi_substrate_py_test(
         deps = _substrate_deps(deps, "numpy"),
         tags = tags + ["tfp_numpy"] + numpy_tags,
         srcs_version = srcs_version,
+        python_version = "PY3",
         timeout = timeout,
         shard_count = shard_count,
     )
@@ -212,9 +217,8 @@ def multi_substrate_py_test(
         tools = [REWRITER_TARGET],
     )
     jax_deps = _substrate_deps(deps, "jax")
-
     # [internal] Add JAX build dep
-    native.py_test(
+    py3_test(
         name = "{}.jax".format(name),
         size = jax_size if jax_size else size,
         srcs = jax_srcs,
@@ -222,6 +226,7 @@ def multi_substrate_py_test(
         deps = jax_deps,
         tags = tags + ["tfp_jax"] + jax_tags,
         srcs_version = srcs_version,
+        python_version = "PY3",
         timeout = timeout,
         shard_count = shard_count,
     )

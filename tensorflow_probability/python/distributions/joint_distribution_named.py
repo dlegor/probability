@@ -22,7 +22,6 @@ import collections
 
 import tensorflow.compat.v2 as tf
 
-from tensorflow_probability.python.distributions import distribution as distribution_lib
 from tensorflow_probability.python.distributions import joint_distribution_sequential
 from tensorflow_probability.python.internal import distribution_util
 
@@ -103,7 +102,7 @@ class JointDistributionNamed(
   # ==> A scalar `Tensor` representing the total log prob under all five
   #     distributions.
 
-  joint._resolve_graph()
+  joint.resolve_graph()
   # ==> (('e', ()),
   #      ('g', ('e',)),
   #      ('n', ()),
@@ -202,24 +201,8 @@ class JointDistributionNamed(
       return tuple(xs.get(n, None) for n in self._dist_fn_name)
     return tuple(getattr(xs, n) for n in self._dist_fn_name)
 
-  def _resolve_graph(self, distribution_names=None, leaf_name='x'):
-    return tuple(zip(self._dist_fn_name,
-                     [() if x is None else x
-                      for x in self._dist_fn_args]))
-
   def _flat_resolve_names(self, distribution_names=None, leaf_name='x'):
     return self._dist_fn_name
-
-  def _default_event_space_bijector(self):
-    if not all(
-        isinstance(d, distribution_lib.Distribution) for d in self._dist_fn):
-      raise NotImplementedError(
-          '_default_event_space_bijector` is implemented only for instances'
-          ' of `JointDistributionNamed` for which all elements of `model` are '
-          '`tfp.distribution`s (not callables).')
-    flat_bijectors = (d._experimental_default_event_space_bijector()  # pylint: disable=protected-access
-                      for d in self._model_flatten(self.model))
-    return self._model_unflatten(flat_bijectors)
 
 
 class _Node(object):

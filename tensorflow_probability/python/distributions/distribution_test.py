@@ -295,7 +295,8 @@ class DistributionTest(test_util.TestCase):
         tfd.Beta,
         tfd.Chi2,
         tfd.Exponential,
-        tfd.Gamma,
+        # Uncomment when b/150222300 is fixed.
+        # tfd.Gamma,
         tfd.InverseGamma,
         tfd.Laplace,
         tfd.StudentT,
@@ -519,6 +520,14 @@ class DistributionTest(test_util.TestCase):
     ):
       list(normal)
 
+  def testQuantileOutOfBounds(self):
+    normal = tfd.Normal(loc=0., scale=1., validate_args=True)
+    self.evaluate(normal.quantile(0.01))
+    with self.assertRaisesOpError(r'must be >= 0'):
+      self.evaluate(normal.quantile(-.01))
+    with self.assertRaisesOpError(r'must be <= 1'):
+      self.evaluate(normal.quantile(1.01))
+
 
 class Dummy(tfd.Distribution):
 
@@ -557,13 +566,14 @@ class ParametersTest(test_util.TestCase):
 
     scale = 0.25
     self.assertNear(0.5 * np.log(2. * np.pi * np.e * scale**2.),
-                    normal_differential_entropy(scale).numpy(),
+                    self.evaluate(normal_differential_entropy(scale)),
                     err=1e-5)
 
 
 @test_util.test_all_tf_execution_regimes
 class TfModuleTest(test_util.TestCase):
 
+  @test_util.jax_disable_variable_test
   def test_variable_tracking_works(self):
     scale = tf.Variable(1.)
     normal = tfd.Normal(loc=0, scale=scale, validate_args=True)

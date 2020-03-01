@@ -24,12 +24,10 @@ from tensorflow_probability.python.bijectors import bijector
 from tensorflow_probability.python.internal import assert_util
 from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import tensor_util
-from tensorflow.python.util import deprecation  # pylint: disable=g-direct-tensorflow-import
 
 
 __all__ = [
     'GumbelCDF',
-    'Gumbel',
 ]
 
 
@@ -66,6 +64,7 @@ class GumbelCDF(bijector.Bijector):
         checked for correctness.
       name: Python `str` name given to ops managed by this object.
     """
+    parameters = dict(locals())
     with tf.name_scope(name) as name:
       dtype = dtype_util.common_dtype([loc, scale], dtype_hint=tf.float32)
       self._loc = tensor_util.convert_nonref_to_tensor(
@@ -75,6 +74,7 @@ class GumbelCDF(bijector.Bijector):
       super(GumbelCDF, self).__init__(
           validate_args=validate_args,
           forward_min_event_ndims=0,
+          parameters=parameters,
           name=name)
 
   @property
@@ -128,21 +128,3 @@ class GumbelCDF(bijector.Bijector):
           self.scale,
           message='Argument `scale` must be positive.'))
     return assertions
-
-
-class Gumbel(GumbelCDF):
-  """Computes the Gumbel CDF."""
-
-  @deprecation.deprecated(
-      '2020-01-20',
-      'Gumbel is deprecated, use GumbelCDF(...) instead.',
-      warn_once=True)
-
-  def __init__(self,
-               loc=0.,
-               scale=1.,
-               validate_args=False,
-               name='gumbel'):
-    with tf.name_scope(name) as name:
-      super(Gumbel, self).__init__(
-          loc=loc, scale=scale, validate_args=validate_args, name=name)

@@ -122,9 +122,10 @@ class PixelCNN(distribution.Distribution):
   batch_size = 16
   train_it = train_data.map(image_preprocess).batch(batch_size).shuffle(1000)
 
+  image_shape = (28, 28, 1)
   # Define a Pixel CNN network
   dist = tfd.PixelCNN(
-      image_shape=(28, 28, 1),
+      image_shape=image_shape,
       num_resnet=1,
       num_hierarchies=2,
       num_filters=32,
@@ -133,7 +134,7 @@ class PixelCNN(distribution.Distribution):
   )
 
   # Define the model input
-  image_input = tfkl.Input(shape=input_shape)
+  image_input = tfkl.Input(shape=image_shape)
 
   # Define the log likelihood for the loss fn
   log_prob = dist.log_prob(image_input)
@@ -317,6 +318,11 @@ class PixelCNN(distribution.Distribution):
           use_data_init=use_data_init,
           dtype=dtype)
 
+      image_shape = tensorshape_util.constant_value_as_shape(image_shape)
+      conditional_shape = (None if conditional_shape is None
+                           else tensorshape_util.constant_value_as_shape(
+                               conditional_shape))
+
       image_input_shape = tensorshape_util.concatenate([None], image_shape)
       if conditional_shape is None:
         input_shape = image_input_shape
@@ -444,7 +450,7 @@ class PixelCNN(distribution.Distribution):
       num_coeffs = num_channels * (num_channels - 1) // 2
       loc_tensors = tf.split(locs, num_channels, axis=-1)
       coef_tensors = tf.split(coeffs, num_coeffs, axis=-1)
-      channel_tensors = tf.split(value, num_channels, axis=-1)
+      channel_tensors = tf.split(transformed_value, num_channels, axis=-1)
 
       coef_count = 0
       for i in range(num_channels):
@@ -691,7 +697,7 @@ class _PixelCNNNetwork(tf.keras.layers.Layer):
       def layer_wrapper(layer):
         def wrapped_layer(*args, **kwargs):
           return weight_norm.WeightNorm(
-              layer(*args, dtype=dtype, **kwargs), data_init=use_data_init)
+              layer(*args, **kwargs), data_init=use_data_init)
         return wrapped_layer
       self._layer_wrapper = layer_wrapper
     else:

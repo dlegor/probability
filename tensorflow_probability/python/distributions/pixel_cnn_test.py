@@ -29,7 +29,9 @@ from tensorflow_probability.python.internal import test_util
 tfd = tfp.distributions
 
 
-@test_util.test_all_tf_execution_regimes
+# Not decorating with `test_util.test_all_tf_execution_regimes` since the
+# `WeightNorm` layer wrapper fails in Eager without `tf.function`.
+@test_util.test_graph_and_eager_modes
 class PixelCnnTest(test_util.TestCase):
 
   def setUp(self):
@@ -37,10 +39,11 @@ class PixelCnnTest(test_util.TestCase):
     self.batch_shape = (2,)
     self.image_shape = tf.TensorShape((8, 8, 3))
     self.high = 10
+    self.low = 0
     self.h_shape = None
     self.num_logistic_mix = 1
 
-  def _make_pixel_cnn(self):
+  def _make_pixel_cnn(self, use_weight_norm_and_data_init=False):
     return tfd.PixelCNN(
         image_shape=self.image_shape,
         conditional_shape=self.h_shape,
@@ -49,11 +52,13 @@ class PixelCnnTest(test_util.TestCase):
         num_filters=1,
         num_logistic_mix=self.num_logistic_mix,
         high=self.high,
-        use_weight_norm=False,
-        use_data_init=False)
+        low=self.low,
+        use_weight_norm=use_weight_norm_and_data_init,
+        use_data_init=use_weight_norm_and_data_init)
 
   def _make_fake_images(self):
     return np.random.randint(
+        self.low,
         self.high,
         size=self.batch_shape + self.image_shape).astype(np.float32)
 
@@ -70,6 +75,7 @@ class PixelCnnTest(test_util.TestCase):
 
     h = self._make_fake_conditional()
     def g(x):
+      x = (2. * (x - self.low) / (self.high - self.low)) - 1.
       inputs = [x, h] if h is not None else x
       params = dist.network(inputs)
       out = self._apply_channel_conditioning(dist, x, *params)
@@ -127,10 +133,15 @@ class PixelCnnTest(test_util.TestCase):
 
   def testSample(self):
 
-    num_samples = 3
+    num_samples = 2
     h = self._make_fake_conditional()
 
-    dist = self._make_pixel_cnn()
+    # Weight normalization and data-dependent initialization work only in Eager
+    # so we enable them only if executing eagerly. We use them only in this
+    # test, since they add significantly to run time, and using them in
+    # additional tests wouldn't meaningfully increase coverage.
+    dist = self._make_pixel_cnn(
+        use_weight_norm_and_data_init=tf.executing_eagerly())
     self.evaluate([v.initializer for v in dist.network.weights])
     sample_shape = ((num_samples,) if h is None
                     else (num_samples,) + self.batch_shape)
@@ -138,7 +149,7 @@ class PixelCnnTest(test_util.TestCase):
 
     self.assertAllEqual(sample_shape + self.image_shape,
                         self.evaluate(tf.shape(samples)))
-    self.assertAllInRange(samples, 0., self.high)
+    self.assertAllInRange(samples, self.low, self.high)
     self.assertLessEqual(np.unique(samples).size, self.high+1)
 
     sample_rng_1 = dist.sample(
@@ -235,6 +246,7 @@ class PixelCnnTest(test_util.TestCase):
         num_logistic_mix=2,
         dtype=tf.float64,
         high=self.high,
+        low=self.low,
         use_weight_norm=False,
         use_data_init=False)
 
@@ -243,7 +255,10 @@ class PixelCnnTest(test_util.TestCase):
                      dist64.sample(sample_shape, conditional_input=h).dtype)
 
 
-@test_util.test_all_tf_execution_regimes
+# As with `PixelCnnTest`, we do not use
+# `test_util.test_all_tf_execution_regimes` since the `WeightNorm` layer wrapper
+# fails in Eager without `tf.function`.
+@test_util.test_graph_and_eager_modes
 class ConditionalPixelCnnTest(PixelCnnTest):
 
   def setUp(self):
@@ -261,6 +276,22 @@ class ConditionalPixelCnnTest(PixelCnnTest):
     return [tf.keras.layers.Input(shape=self.image_shape),
             tf.keras.layers.Input(shape=self.h_shape)]
 
+  def testScalarConditional(self):
+    dist = tfd.PixelCNN(
+        image_shape=self.image_shape,
+        conditional_shape=(),
+        num_resnet=2,
+        num_hierarchies=2,
+        num_filters=3,
+        num_logistic_mix=2,
+        high=self.high,
+        low=self.low)
+
+    self.evaluate([v.initializer for v in dist.network.weights])
+    self.evaluate(
+        dist.log_prob(
+            dist.sample(conditional_input=1.),
+            conditional_input=0.))
 
 if __name__ == '__main__':
   tf.test.main()

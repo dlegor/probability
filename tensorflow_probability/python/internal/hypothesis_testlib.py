@@ -319,9 +319,9 @@ def constrained_tensors(constraint_fn, shape, dtype=np.float32):
     x = constraint_fn(tf.convert_to_tensor(x, dtype_hint=dtype))
     if dtype_util.is_floating(x.dtype) and tf.executing_eagerly():
       # We'll skip this check in graph mode; too expensive.
-      if not np.all(np.isfinite(x.numpy())):
+      if not np.all(np.isfinite(np.array(x))):
         raise AssertionError('{} generated non-finite param value: {}'.format(
-            constraint_fn, x.numpy()))
+            constraint_fn, np.array(x)))
     return x
 
   return hpnp.arrays(dtype=dtype, shape=shape, elements=floats).map(mapper)
@@ -569,17 +569,20 @@ def _compute_rank_and_fullsize_reqd(draw, target_shape, current_shape, is_last):
       corresponding axis of the shape must be full-sized (True) or is allowed to
       be 1 (i.e., broadcast) (False).
   """
-  target_rank = target_shape.ndims
+  target_rank = tensorshape_util.rank(target_shape)
   if is_last:
     # We must force full size dim on any mismatched axes, and proper rank.
     full_rank_current = tf.broadcast_static_shape(
         current_shape, tf.TensorShape([1] * target_rank))
     # Identify axes in which the target shape is not yet matched.
+    full_rank_current_list = tensorshape_util.as_list(full_rank_current)
+    target_shape_list = tensorshape_util.as_list(target_shape)
     axis_is_mismatched = [
-        full_rank_current[i] != target_shape[i] for i in range(target_rank)
+        full_rank_current_list[i] !=
+        target_shape_list[i] for i in range(target_rank)
     ]
     min_rank = target_rank
-    if current_shape.ndims == target_rank:
+    if tensorshape_util.rank(current_shape) == target_rank:
       # Current rank might be already correct, but we could have a case like
       # batch_shape=[4,3,2] and current_batch_shape=[4,1,2], in which case
       # we must have at least 2 axes on this param's batch shape.
@@ -623,7 +626,7 @@ def broadcasting_shapes(draw, target_shape, n):
       fully defined.
   """
   target_shape = tf.TensorShape(target_shape)
-  target_rank = target_shape.ndims
+  target_rank = tensorshape_util.rank(target_shape)
   result = []
   current_shape = tf.TensorShape([])
   for is_last in [False] * (n - 1) + [True]:
@@ -631,7 +634,8 @@ def broadcasting_shapes(draw, target_shape, n):
         draw, target_shape, current_shape, is_last=is_last)
 
     # Get the last next_rank (possibly 0!) dimensions.
-    next_shape = target_shape[target_rank - next_rank:].as_list()
+    next_shape = tensorshape_util.as_list(
+        target_shape[target_rank - next_rank:])
     for i, force_fullsize in enumerate(force_fullsize_dim):
       if not force_fullsize and draw(hps.booleans()):
         # Choose to make this param broadcast against some other param.
@@ -640,6 +644,56 @@ def broadcasting_shapes(draw, target_shape, n):
     current_shape = tf.broadcast_static_shape(current_shape, next_shape)
     result.append(next_shape)
   return result
+
+
+def _rank_broadcasting_error_pattern(left_rank, right_rank, op=None):
+  ans = (r'Broadcast between \[([0-9]*,){' + str(left_rank - 1) + r',}[0-9]*\] '
+         r'and \[([0-9]*,){' + str(right_rank - 1) + r',}[0-9]*\] '
+         r'is not supported yet')
+  if op is not None:
+    ans += r'. \[' + op + r'\]'
+  return ans
+
+
+@contextlib.contextmanager
+def no_tf_rank_errors():
+  # TODO(axch): Instead of catching and `assume`ing away rank errors, could try
+  # harder to avoid generating them in the first place.  For instance, could add
+  # a parameter to `valid_slices` that limits how much the rank may increase
+  # after the slice.  Trouble is, predicting what limits to set is difficult
+  # because rank handling is non-uniform, and actually meeting them is also
+  # non-trivial because in addition to the batch shape there is the event shape,
+  # and at least one more dimention added by `sample`, and the parameters may
+  # have larger "event" shapes than the distribution itself.
+  input_dims_pat = r'Unhandled input dimensions (8|9|[1-9][0-9]+)'
+  input_rank_pat = r'inputs rank not in \[0,([6-9]|[1-9][0-9]+)\]'
+  cwise_op_names = r'Op:(AddV2|Sub|Mul|SquaredDifference|RealDiv|BroadcastTo)'
+  cwise_pat_1 = _rank_broadcasting_error_pattern(5, 6, cwise_op_names)
+  cwise_pat_2 = _rank_broadcasting_error_pattern(6, 5, cwise_op_names)
+  pat_1 = _rank_broadcasting_error_pattern(8, 9)
+  pat_2 = _rank_broadcasting_error_pattern(9, 8)
+  try:
+    yield
+  except tf.errors.UnimplementedError as e:
+    # TODO(b/138385438): This really shouldn't be so complicated.
+    # Bug requesting that TF increase the rank limit: b/137689241.
+    # See also b/148230377.
+    msg = str(e)
+    if re.search(pat_1, msg) or re.search(pat_2, msg):
+      # We asked some op (SelectV2?) to broadcast Tensors one of whose ranks
+      # >= 9.
+      hp.assume(False)
+    elif re.search(cwise_pat_1, msg) or re.search(cwise_pat_2, msg):
+      # We asked some cwise op to broadcast Tensors one of whose ranks >= 6.
+      hp.assume(False)
+    elif re.search(input_dims_pat, msg):
+      # We asked some TF op (StridedSlice?) to operate on a Tensor of rank >= 8.
+      hp.assume(False)
+    elif re.search(input_rank_pat, msg):
+      # We asked some TF op (PadV2?) to operate on a Tensor of rank >= 7.
+      hp.assume(False)
+    else:
+      raise
 
 
 # Utility functions for constraining parameters and/or domain/codomain members.

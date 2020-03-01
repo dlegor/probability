@@ -20,7 +20,9 @@ from __future__ import print_function
 
 import contextlib
 import os
+import sys
 
+from absl import app
 from absl import flags
 from absl import logging
 from absl.testing import parameterized
@@ -45,6 +47,7 @@ __all__ = [
     'test_graph_mode_only',
     'test_seed',
     'test_seed_stream',
+    'floats_near',
     'DiscreteScalarDistributionTestHelpers',
     'TestCase',
     'VectorDistributionTestHelpers',
@@ -59,6 +62,11 @@ flags.DEFINE_bool('vary_seed', False,
 flags.DEFINE_string('fixed_seed', None,
                     ('PRNG seed to initialize every test with.  '
                      'Takes precedence over --vary-seed when both appear.'))
+
+# Unlike bazel, `pytest` doesn't invoke `tf.test.run()` (which parses flags), so
+# for external developers using pytest we just parse the flags directly.
+if 'pytest' in sys.modules:
+  app._register_and_parse_flags_with_usage()  # pylint: disable=protected-access
 
 
 class TestCase(tf.test.TestCase, parameterized.TestCase):
@@ -80,6 +88,20 @@ class TestCase(tf.test.TestCase, parameterized.TestCase):
       return x
     else:
       return tf1.placeholder_with_default(x, shape=None)
+
+  def assertAllEqualNested(self, a, b, check_types=False):
+    """Assert that analogous entries in two nested structures are equivalent.
+
+    Args:
+      a: A nested structure.
+      b: A nested structure.
+      check_types: If `True`, types of sequences are checked as well, including
+        the keys of dictionaries. If `False`, for example a list and a tuple of
+        objects may be equivalent.
+    """
+    tf.nest.assert_same_structure(a, b, check_types=check_types)
+    for a_, b_ in zip(tf.nest.flatten(a), tf.nest.flatten(b)):
+      self.assertAllEqual(a_, b_)
 
   def assertAllFinite(self, a):
     """Assert that all entries in a `Tensor` are finite.
@@ -468,7 +490,7 @@ def test_seed(hardcoded_seed=None, set_eager_seed=True):
     hardcoded_seed: Optional Python value.  The seed to use instead of 17 if
       both the `--vary_seed` and `--fixed_seed` flags are unset.  This should
       usually be unnecessary, since a test should pass with any seed.
-    set_eager_seed: Python bool.  If true (default), invoke `tf.set_random_seed`
+    set_eager_seed: Python bool.  If true (default), invoke `tf.random.set_seed`
       in Eager mode to get more reproducibility.  Should become unnecessary
       once b/68017812 is resolved.
 
@@ -496,7 +518,7 @@ def test_seed(hardcoded_seed=None, set_eager_seed=True):
 def _wrap_seed(seed, set_eager_seed):
   # TODO(b/68017812): Remove this clause once eager correctly supports seeding.
   if tf.executing_eagerly() and set_eager_seed:
-    tf1.set_random_seed(seed)
+    tf.random.set_seed(seed)
   return seed
 
 
@@ -521,7 +543,7 @@ def test_seed_stream(salt='Salt of the Earth', hardcoded_seed=None):
 
   To those ends, this function returns a `SeedStream` seeded with `test_seed`
   (which see).  The latter respects the command line flags `--fixed_seed=<seed>`
-  and `--vary-seed` (Boolean, default False).  `--vary_seed` uses system entropy
+  and `--vary_seed` (Boolean, default False).  `--vary_seed` uses system entropy
   to produce unpredictable seeds.  `--fixed_seed` takes precedence over
   `--vary_seed` when both are present.
 
@@ -542,6 +564,34 @@ def test_seed_stream(salt='Salt of the Earth', hardcoded_seed=None):
       arguments or command line flags.
   """
   return SeedStream(test_seed(hardcoded_seed), salt=salt)
+
+
+def floats_near(target, how_many, dtype=np.float32):
+  """Returns all the floats nearest the given target.
+
+  This is useful for brute-force testing for situations where round-off errors
+  may violate software invariants (e.g., interpolation result falling outside
+  the interval being interpolated into).
+
+  This implementation may itself have numerical infelicities, so may contain
+  gaps and duplicates, but should be pretty good for non-zero (and non-denormal)
+  targets.
+
+  Args:
+    target: Float near which to produce candidates.
+    how_many: How many candidates to produce.
+    dtype: The floating point type of outputs to emit.  The returned values
+      are supposed to densely cover the space of floats representable in this
+      dtype near the target.
+
+  Returns:
+    floats: A 1-D numpy array of `how_many` floats of the requested type,
+      densely covering the space of representable floats near `target`.
+  """
+  eps = np.finfo(dtype).eps
+  offset = eps * how_many / 2
+  return np.linspace(target * (1. - offset), target * (1. + offset),
+                     how_many, dtype=dtype)
 
 
 class DiscreteScalarDistributionTestHelpers(object):

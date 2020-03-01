@@ -58,7 +58,7 @@ find_version_str() {
   PKG_NAME=$1
   # These are nightly builds we'd like to avoid for some reason; separated by
   # regex OR operator.
-  BAD_NIGHTLY_DATES="20191030\|20191105\|20191215\|20191216"
+  BAD_NIGHTLY_DATES="20200112\|20200113"
   # This will fail to find version 'X" and log available version strings to
   # stderr. We then sort, remove bad versions and take the last entry. This
   # allows us to avoid hardcoding the main version number, which would then need
@@ -80,15 +80,8 @@ install_python_packages() {
   pip install tf-nightly==$TF_VERSION_STR
 
   # The following unofficial dependencies are used only by tests.
-  pip install hypothesis matplotlib mock
-  # TODO(b/146429933): Unpin SciPy version. We only pin for python3 because
-  # scipy stopped supporting py2 some number of versions ago.
-  if [[ "${FLAGS_python_version}" == "python2" ]]; then
-    pip install scipy
-  else
-    pip install scipy==1.3.3
-  fi
-
+  # TODO(b/148685448): Unpin Hypothesis and coverage versions.
+  pip install hypothesis==3.56.5 coverage==4.4.2 matplotlib mock scipy
 
   # Install additional TFP dependencies.
   pip install decorator cloudpickle
@@ -106,13 +99,26 @@ install_python_packages() {
 call_with_log_folding install_bazel
 call_with_log_folding install_python_packages
 
-# Get a shard of tests.
-shard_tests=$(bazel query 'tests(//tensorflow_probability/...)' |
-  awk -v n=${NUM_SHARDS} -v s=${SHARD} 'NR%n == s' )
-MAYBE_FORCE_PY2_FLAG=""
-if [[ $(python -V 2>&1) =~ Python\ 2.* ]]; then
-  MAYBE_FORCE_PY2_FLAG="--noincompatible_py3_is_default"
-fi
+test_tags_to_skip="(gpu|requires-gpu-nvidia|notap|no-oss-ci|tfp_jax|tf2-broken|tf2-kokoro-broken)"
+
+# Given a test size (small, medium, large), a number of shards and a shard ID,
+# query and print a list of tests of the given size to run in the given shard.
+query_and_shard_tests_by_size() {
+  size=$1
+  bazel_query="attr(size, ${size}, tests(//tensorflow_probability/...)) \
+               except \
+               attr(tags, \"${test_tags_to_skip}\", \
+                    tests(//tensorflow_probability/...))"
+  bazel query ${bazel_query} \
+    | awk -v n=${NUM_SHARDS} -v s=${SHARD} 'NR%n == s'
+}
+
+# Generate a list of tests for this shard, consisting of a subset of tests of
+# each size (small, medium and large). By evenly splitting the various test
+# sizes across shards, we help ensure the shards have comparable runtimes.
+sharded_tests="$(query_and_shard_tests_by_size small)"
+sharded_tests="${sharded_tests} $(query_and_shard_tests_by_size medium)"
+sharded_tests="${sharded_tests} $(query_and_shard_tests_by_size large)"
 
 # Run tests. Notes on less obvious options:
 #   --notest_keep_going -- stop running tests as soon as anything fails. This is
@@ -120,20 +126,17 @@ fi
 #     jobs with a bunch of other TensorFlow projects.
 #   --test_timeout -- comma separated values correspond to various test sizes
 #     (short, moderate, long or eternal)
-#   --test_tag_filters -- skip tests whose 'tags' arg (if present) includes any
-#     of the comma-separated entries
 #   --action_env -- specify environment vars to pass through to action
 #     environment. (We need these in order to run inside a virtualenv.)
 #     See https://github.com/bazelbuild/bazel/issues/6648 and b/121259040.
-echo "${shard_tests}" \
+echo "${sharded_tests}" \
   | xargs bazel test \
     --compilation_mode=opt \
     --copt=-O3 \
     --copt=-march=native \
     --notest_keep_going \
-    --test_tag_filters=-gpu,-requires-gpu-sm35,-notap,-no-oss-ci,-tfp_jax,-tf2-broken,-tf2-kokoro-broken \
     --test_timeout 300,450,1200,3600 \
+    --test_env=TFP_HYPOTHESIS_MAX_EXAMPLES=2 \
     --action_env=PATH \
     --action_env=LD_LIBRARY_PATH \
-    --test_output=errors \
-    ${MAYBE_FORCE_PY2_FLAG}
+    --test_output=errors

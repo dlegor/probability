@@ -28,7 +28,15 @@ import tensorflow.compat.v2 as tf
 from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import tensorshape_util
 from tensorflow_probability.python.internal.backend import numpy as nptf
-from tensorflow.python import pywrap_tensorflow as c_api  # pylint: disable=g-direct-tensorflow-import
+
+# Try catch required to avoid breaking Probability opensource presubmits.
+# TODO(amitpatankar): Remove this once tf-nightly has latest code.
+# pylint: disable=g-import-not-at-top
+try:
+  from tensorflow.python.client import pywrap_tf_session as c_api  # pylint: disable=g-direct-tensorflow-import
+except ImportError:
+  from tensorflow.python import pywrap_tensorflow as c_api  # pylint: disable=g-direct-tensorflow-import
+
 from tensorflow.python.ops import control_flow_ops  # pylint: disable=g-direct-tensorflow-import
 from tensorflow.python.util import tf_inspect  # pylint: disable=g-direct-tensorflow-import
 
@@ -339,11 +347,11 @@ size = _copy_docstring(tf.size, _size)
 
 def _shape(input, out_type=tf.int32, name=None):  # pylint: disable=redefined-builtin,missing-docstring
   if not hasattr(input, 'shape'):
-    x = np.array(input)
+    x = onp.array(input)
     input = tf.convert_to_tensor(input) if x.dtype is np.object else x
   input_shape = tf.TensorShape(input.shape)
   if tensorshape_util.is_fully_defined(input.shape):
-    return np.array(tensorshape_util.as_list(input_shape)).astype(
+    return onp.array(tensorshape_util.as_list(input_shape)).astype(
         _numpy_dtype(out_type))
   # NOTE: tf.shape(x) can call `tf.convert_to_tensor(x)` **twice**, so we
   # pre-emptively convert-to-tensor.
@@ -409,6 +417,8 @@ pad = _prefer_static(tf.pad, nptf.pad)
 range = _prefer_static(tf.range, nptf.range)  # pylint: disable=redefined-builtin
 reduce_all = _prefer_static(tf.reduce_all, nptf.reduce_all)
 reduce_any = _prefer_static(tf.reduce_any, nptf.reduce_any)
+reduce_max = _prefer_static(tf.reduce_max, nptf.reduce_max)
+reduce_min = _prefer_static(tf.reduce_min, nptf.reduce_min)
 reduce_prod = _prefer_static(tf.reduce_prod, nptf.reduce_prod)
 reduce_sum = _prefer_static(tf.reduce_sum, nptf.reduce_sum)
 reshape = _prefer_static(tf.reshape, nptf.reshape)

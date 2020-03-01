@@ -18,6 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from tensorflow_probability.python.internal.backend.numpy import bitwise
 from tensorflow_probability.python.internal.backend.numpy import compat
 from tensorflow_probability.python.internal.backend.numpy import debugging
 from tensorflow_probability.python.internal.backend.numpy import dtype as dtypes
@@ -30,6 +31,7 @@ from tensorflow_probability.python.internal.backend.numpy import numpy_logging a
 from tensorflow_probability.python.internal.backend.numpy import numpy_math as math
 from tensorflow_probability.python.internal.backend.numpy import numpy_signal as signal
 from tensorflow_probability.python.internal.backend.numpy import random_generators as random
+from tensorflow_probability.python.internal.backend.numpy import raw_ops
 from tensorflow_probability.python.internal.backend.numpy import sets_lib as sets
 from tensorflow_probability.python.internal.backend.numpy import sparse_lib as sparse
 from tensorflow_probability.python.internal.backend.numpy import test_lib as test

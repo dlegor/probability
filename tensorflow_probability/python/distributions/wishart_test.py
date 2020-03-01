@@ -89,9 +89,11 @@ class WishartTest(test_util.TestCase):
     self.assertAllEqual([2, 2], self.evaluate(wish.event_shape_tensor()))
     self.assertAllEqual([3], tensorshape_util.as_list(wish.batch_shape))
     self.assertAllEqual([3], self.evaluate(wish.batch_shape_tensor()))
-    self.assertAllEqual([4, 3, 2, 2], wish.sample(sample_shape=(4,)).shape)
+    self.assertAllEqual([4, 3, 2, 2], wish.sample(
+        sample_shape=(4,), seed=test_util.test_seed()).shape)
     self.assertAllEqual([4, 3, 2, 2],
-                        self.evaluate(tf.shape(wish.sample(sample_shape=(4,)))))
+                        self.evaluate(tf.shape(wish.sample(
+                            sample_shape=(4,), seed=test_util.test_seed()))))
 
   def testMean(self):
     scale = make_pd(1., 2)
@@ -197,7 +199,7 @@ class WishartTest(test_util.TestCase):
     n_val = 100
     seed = test_util.test_seed()
 
-    tf1.set_random_seed(seed)
+    tf.random.set_seed(seed)
     chol_w1 = tfd.WishartTriL(
         df=df,
         scale_tril=chol(make_pd(1., 3)),
@@ -207,7 +209,7 @@ class WishartTest(test_util.TestCase):
 
     samples1 = self.evaluate(chol_w1.sample(n_val, seed=seed))
 
-    tf1.set_random_seed(seed)
+    tf.random.set_seed(seed)
     chol_w2 = tfd.WishartTriL(
         df=df,
         scale_tril=chol(make_pd(1., 3)),

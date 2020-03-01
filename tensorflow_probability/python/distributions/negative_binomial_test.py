@@ -76,7 +76,14 @@ class NegativeBinomialTest(test_util.TestCase):
   def testInvalidNegativeCount(self):
     invalid_rs = [-3., 0., -2.,]
     with self.assertRaisesOpError(
-        '`total_count` has components less than 0.'):
+        '`total_count` has components less than or equal to 0.'):
+      negbinom = tfd.NegativeBinomial(
+          total_count=invalid_rs, probs=0.1, validate_args=True)
+      self.evaluate(negbinom.sample(seed=test_util.test_seed()))
+
+    invalid_rs = [3., 2., 0.]
+    with self.assertRaisesOpError(
+        '`total_count` has components less than or equal to 0.'):
       negbinom = tfd.NegativeBinomial(
           total_count=invalid_rs, probs=0.1, validate_args=True)
       self.evaluate(negbinom.sample(seed=test_util.test_seed()))
@@ -132,7 +139,7 @@ class NegativeBinomialTest(test_util.TestCase):
     negbinom = tfd.NegativeBinomial(
         total_count=total_count, probs=probs, validate_args=True)
 
-    with self.assertRaisesOpError('Condition x == y'):
+    with self.assertRaisesOpError('cannot contain fractional components'):
       self.evaluate(negbinom.log_prob(x))
 
     with self.assertRaisesOpError('Condition x >= 0'):
@@ -295,13 +302,14 @@ class NegativeBinomialFromVariableTest(test_util.TestCase):
       self.evaluate(d.sample(seed=test_util.test_seed()))
 
   def testAssertionsTotalCountMutation(self):
-    x = tf.Variable([5., 3., 1.])
-    d = tfd.NegativeBinomial(total_count=x, probs=0.7, validate_args=True)
+    x = tf.Variable([5., 3., 1.], dtype=tf.float32)
+    d = tfd.NegativeBinomial(
+        total_count=x, probs=0.7, validate_args=True)
     self.evaluate(x.initializer)
     self.evaluate(d.sample(seed=test_util.test_seed()))
     with tf.control_dependencies([x.assign([-5., 3., 1.])]):
       with self.assertRaisesOpError(
-          '`total_count` has components less than 0.'):
+          '`total_count` has components less than or equal to 0.'):
         self.evaluate(d.sample(seed=test_util.test_seed()))
 
     with tf.control_dependencies([x.assign([5., 3.2, 1.])]):
@@ -314,7 +322,7 @@ class NegativeBinomialFromVariableTest(test_util.TestCase):
     d = tfd.NegativeBinomial(total_count=x, probs=0.7, validate_args=True)
     self.evaluate(x.initializer)
     with self.assertRaisesOpError(
-        '`total_count` has components less than 0.'):
+        '`total_count` has components less than or equal to 0.'):
       self.evaluate(d.sample(seed=test_util.test_seed()))
 
     x = tf.Variable([5., 3.7, 1.])

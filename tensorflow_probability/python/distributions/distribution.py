@@ -31,6 +31,7 @@ import tensorflow.compat.v2 as tf
 
 from tensorflow_probability.python.distributions import kullback_leibler
 from tensorflow_probability.python.distributions.internal import slicing
+from tensorflow_probability.python.internal import assert_util
 from tensorflow_probability.python.internal import distribution_util
 from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import name_util
@@ -337,11 +338,10 @@ class Distribution(_BaseDistribution):
   The batch shape is determined by broadcasting together the parameters.
 
   The shape of arguments to `__init__`, `cdf`, `log_cdf`, `prob`, and
-  `log_prob` reflect this broadcasting, as does the return value of `sample` and
-  `sample_n`.
+  `log_prob` reflect this broadcasting, as does the return value of `sample`.
 
   `sample_n_shape = [n] + batch_shape + event_shape`, where `sample_n_shape` is
-  the shape of the `Tensor` returned from `sample_n`, `n` is the number of
+  the shape of the `Tensor` returned from `sample(n)`, `n` is the number of
   samples, `batch_shape` defines how many independent distributions there are,
   and `event_shape` defines the shape of samples from each of those independent
   distributions. Samples are independent along the `batch_shape` dimensions, but
@@ -368,7 +368,7 @@ class Distribution(_BaseDistribution):
   # Sampling returns a sample per distribution. `samples` has shape
   # [5, 2, 2], which is [n] + batch_shape + event_shape, where n=5,
   # batch_shape=[2, 2], and event_shape=[].
-  samples = u.sample_n(5)
+  samples = u.sample(5)
 
   # The broadcasting holds across methods. Here we use `cdf` as an example. The
   # same holds for `log_cdf` and the likelihood functions.
@@ -1078,8 +1078,15 @@ class Distribution(_BaseDistribution):
 
   def _call_quantile(self, value, name, **kwargs):
     with self._name_and_control_scope(name):
-      value = _convert_to_tensor(
-          value, name='value', dtype_hint=self.dtype)
+      dtype = tf.float32 if tf.nest.is_nested(self.dtype) else self.dtype
+      value = tf.convert_to_tensor(value, name='value', dtype_hint=dtype)
+      if self.validate_args:
+        value = distribution_util.with_dependencies([
+            assert_util.assert_less_equal(value, tf.cast(1, value.dtype),
+                                          message='`value` must be <= 1'),
+            assert_util.assert_greater_equal(value, tf.cast(0, value.dtype),
+                                             message='`value` must be >= 0')
+        ], value)
       return self._quantile(value, **kwargs)
 
   def quantile(self, value, name='quantile', **kwargs):

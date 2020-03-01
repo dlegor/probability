@@ -18,8 +18,8 @@
 # [internal] load python3.bzl
 load(
     "//tensorflow_probability/python:build_defs.bzl",
-    "multi_substrate_py_library",
     "multi_substrate_py_test",
+    "multi_substrate_py_library",
 )
 
 package(
@@ -47,7 +47,9 @@ multi_substrate_py_library(
         ":numeric",
         ":random_ops",
         ":root_search",
+        ":scan_associative",
         ":sparse",
+        ":special",
         "//tensorflow_probability/python/math/ode",
         "//tensorflow_probability/python/math/psd_kernels",
     ],
@@ -128,7 +130,7 @@ multi_substrate_py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "interpolation",
     srcs = [
         "interpolation.py",
@@ -143,10 +145,12 @@ py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "interpolation_test",
     size = "small",
     srcs = ["interpolation_test.py"],
+    jax_size = "medium",
+    numpy_tags = ["notap"],
     deps = [
         # numpy dep,
         # scipy dep,
@@ -172,10 +176,12 @@ multi_substrate_py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "linalg_test",
-    size = "small",
+    size = "medium",
     srcs = ["linalg_test.py"],
+    jax_size = "medium",
+    numpy_tags = ["notap"],
     shard_count = 5,
     tags = ["hypothesis"],
     deps = [
@@ -185,6 +191,7 @@ py_test(
         # tensorflow dep,
         "//tensorflow_probability",
         "//tensorflow_probability/python/internal:hypothesis_testlib",
+        "//tensorflow_probability/python/internal:tensorshape_util",
         "//tensorflow_probability/python/internal:test_util",
     ],
 )
@@ -227,7 +234,7 @@ multi_substrate_py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "numeric_test",
     size = "small",
     srcs = [
@@ -266,7 +273,7 @@ multi_substrate_py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "diag_jacobian",
     srcs = [
         "diag_jacobian.py",
@@ -278,10 +285,12 @@ py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "diag_jacobian_test",
     size = "small",
     srcs = ["diag_jacobian_test.py"],
+    jax_size = "medium",
+    numpy_tags = ["notap"],
     deps = [
         # numpy dep,
         # tensorflow dep,
@@ -290,7 +299,7 @@ py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "root_search",
     srcs = [
         "root_search.py",
@@ -302,7 +311,7 @@ py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "root_search_test",
     size = "small",
     srcs = ["root_search_test.py"],
@@ -338,6 +347,61 @@ py_test(
     ],
 )
 
+multi_substrate_py_library(
+    name = "scan_associative",
+    srcs = ["scan_associative.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:prefer_static",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "scan_associative_test",
+    size = "medium",
+    srcs = ["scan_associative_test.py"],
+    jax_tags = ["notap"],
+    numpy_tags = ["notap"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":scan_associative",
+        # numpy dep,
+        "//tensorflow_probability",
+        "//tensorflow_probability/python/internal:test_util",
+#         "//third_party/tensorflow/compiler/jit:xla_cpu_jit",  # DisableOnExport
+    ],
+)
+
+multi_substrate_py_library(
+    name = "special",
+    srcs = [
+        "special.py",
+    ],
+    srcs_version = "PY2AND3",
+    deps = [
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:prefer_static",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "special_test",
+    size = "small",
+    srcs = ["special_test.py"],
+    jax_tags = ["notap"],
+    deps = [
+        # absl/testing:parameterized dep,
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability",
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
 exports_files(
     [
         "generic.py",
@@ -346,6 +410,7 @@ exports_files(
         "gradient_test.py",
         "linalg.py",
         "numeric.py",
+        "special.py",
     ],
     visibility = ["//tensorflow_probability:__subpackages__"],
 )

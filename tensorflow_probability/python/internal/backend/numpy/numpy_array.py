@@ -27,11 +27,14 @@ import tensorflow.compat.v2 as tf
 
 from tensorflow_probability.python.internal.backend.numpy import _utils as utils
 from tensorflow_probability.python.internal.backend.numpy import ops
+from tensorflow_probability.python.internal.backend.numpy.linalg_impl import einsum
 from tensorflow_probability.python.internal.backend.numpy.linalg_impl import norm
+from tensorflow_probability.python.internal.backend.numpy.linalg_impl import tensordot
 
 
 __all__ = [
     'concat',
+    'einsum',
     'expand_dims',
     'fill',
     'gather',
@@ -55,6 +58,7 @@ __all__ = [
     'split',
     'squeeze',
     'stack',
+    'tensordot',
     'tile',
     'transpose',
     'unstack',
@@ -62,10 +66,8 @@ __all__ = [
     'zeros',
     'zeros_like',
     # 'boolean_mask',
-    # 'einsum',
     # 'foldl',
     # 'foldr',
-    # 'tensordot',
 ]
 
 
@@ -91,6 +93,7 @@ def _gather(  # pylint: disable=unused-argument
     batch_dims=0,
     name=None):
   """gather."""
+  indices = ops.convert_to_tensor(indices, dtype_hint=np.int32)
   if validate_indices is not None:
     raise NotImplementedError(
         'Argument `validate_indices != None` is currently unimplemented.')
@@ -107,7 +110,7 @@ def _gather(  # pylint: disable=unused-argument
     take = lambda params, indices: np.take(params, indices,  # pylint: disable=g-long-lambda
                                            axis=axis - batch_dims)
     take = functools.reduce(
-        lambda g, f: f(g), [jax.vmap] * batch_dims,
+        lambda g, f: f(g), [jax.vmap] * int(batch_dims),
         take
     )
     return take(params, indices)
@@ -131,6 +134,7 @@ def _gather_nd(  # pylint: disable=unused-argument
     batch_dims=0,
     name=None):
   """gather_nd."""
+  indices = ops.convert_to_tensor(indices, dtype_hint=np.int32)
   if batch_dims < 0:
     raise NotImplementedError('Negative `batch_dims` is currently unsupported.')
   if not JAX_MODE and batch_dims > 0:
@@ -139,7 +143,7 @@ def _gather_nd(  # pylint: disable=unused-argument
   gather_nd_ = _gather_nd_single
   if JAX_MODE:
     gather_nd_ = functools.reduce(
-        lambda g, f: f(g), [jax.vmap] * batch_dims,
+        lambda g, f: f(g), [jax.vmap] * int(batch_dims),
         gather_nd_
     )
   return gather_nd_(params, indices)
@@ -170,11 +174,8 @@ def _one_hot(  # pylint: disable=unused-argument
   return y_out
 
 
-def _ones_like(input, dtype=None, name=None):  # pylint: disable=redefined-builtin
-  s = _shape(input)
-  if isinstance(s, (np.ndarray, np.generic)):
-    return np.ones(s, utils.numpy_dtype(dtype or input.dtype))
-  return tf.ones(s, dtype or s.dtype, name)
+def _ones_like(input, dtype=None, name=None):  # pylint: disable=redefined-builtin,unused-argument
+  return np.ones_like(input, dtype=utils.numpy_dtype(dtype))
 
 
 # TODO(b/136555907): Add unit-test.
@@ -202,10 +203,19 @@ def _searchsorted(  # pylint: disable=unused-argument
     sorted_sequence,
     values,
     side='left',
-    out_type=tf.int32,
+    out_type=np.int32,
     name=None):
-  return np.searchsorted(
-      sorted_sequence, values, side=side, sorter=None).astype(out_type)
+  """Find indices for insertion for list to remain sorted."""
+  # JAX doesn't support searchsorted at the moment, so we do a very naive way
+  # of search sorting. We also don't use np.searchsorted in the numpy backend
+  # because it doesn't support batching.
+  sorted_sequence = sorted_sequence[..., np.newaxis, :]
+  values = values[..., :, np.newaxis]
+  if side == 'left':
+    is_in_right_location = sorted_sequence < values
+  elif side == 'right':
+    is_in_right_location = sorted_sequence <= values
+  return np.sum(is_in_right_location, axis=-1).astype(out_type)
 
 
 def _shape(input, out_type=tf.int32, name=None):  # pylint: disable=redefined-builtin,unused-argument
@@ -245,11 +255,8 @@ def _transpose(a, perm=None, conjugate=False, name='transpose'):  # pylint: disa
   return np.conjugate(x) if conjugate else x
 
 
-def _zeros_like(input, dtype=None, name=None):  # pylint: disable=redefined-builtin
-  s = _shape(input)
-  if isinstance(s, (np.ndarray, np.generic)):
-    return np.zeros(s, utils.numpy_dtype(dtype or input.dtype))
-  return tf.zeros(s, dtype or s.dtype, name)
+def _zeros_like(input, dtype=None, name=None):  # pylint: disable=redefined-builtin,unused-argument
+  return np.zeros_like(input, dtype=utils.numpy_dtype(dtype))
 
 
 # --- Begin Public Functions --------------------------------------------------
@@ -312,11 +319,11 @@ range = utils.copy_docstring(  # pylint: disable=redefined-builtin
     tf.range,
     lambda start, limit=None, delta=1, dtype=None, name='range': np.arange(  # pylint: disable=g-long-lambda
         start, limit, delta).astype(utils.numpy_dtype(
-            dtype or np.array(start).dtype)))
+            dtype or utils.common_dtype([start], np.int32))))
 
 rank = utils.copy_docstring(
     tf.rank,
-    lambda input, name=None: np.array(input).ndim)  # pylint: disable=redefined-builtin,g-long-lambda
+    lambda input, name=None: np.int32(np.array(input).ndim))  # pylint: disable=redefined-builtin,g-long-lambda
 
 reshape = utils.copy_docstring(
     tf.reshape,
@@ -352,7 +359,7 @@ stack = utils.copy_docstring(
 
 tile = utils.copy_docstring(
     tf.tile,
-    lambda input, multiples, name=None: np.tile(input, multiples))
+    lambda input, multiples, name=None: np.tile(np.array(input), multiples))
 
 transpose = utils.copy_docstring(
     tf.transpose,

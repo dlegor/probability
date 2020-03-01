@@ -156,12 +156,9 @@ class Beta(distribution.Distribution):
 
     Args:
       concentration1: Positive floating-point `Tensor` indicating mean
-        number of successes; aka 'alpha'. Implies `self.dtype` and
-        `self.batch_shape`, i.e.,
-        `concentration1.shape = [N1, N2, ..., Nm] = self.batch_shape`.
+        number of successes; aka 'alpha'.
       concentration0: Positive floating-point `Tensor` indicating mean
-        number of failures; aka 'beta'. Otherwise has same semantics as
-        `concentration1`.
+        number of failures; aka 'beta'.
       validate_args: Python `bool`, default `False`. When `True` distribution
         parameters are checked for validity despite possibly degrading runtime
         performance. When `False` invalid inputs may silently render incorrect
@@ -275,7 +272,7 @@ class Beta(distribution.Distribution):
 
   def _log_unnormalized_prob(self, x, concentration1, concentration0):
     return (tf.math.xlogy(concentration1 - 1., x) +
-            (concentration0 - 1.) * tf.math.log1p(-x))
+            tf.math.xlog1py(concentration0 - 1., -x))
 
   def _log_normalization(self, concentration1, concentration0):
     return (tf.math.lgamma(concentration1) + tf.math.lgamma(concentration0) -

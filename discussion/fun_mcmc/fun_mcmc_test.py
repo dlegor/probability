@@ -1,4 +1,4 @@
-# Copyright 2018 The TensorFlow Probability Authors.
+# Copyright 2020 The TensorFlow Probability Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ def _skip_on_jax(fn):
 
   @functools.wraps(fn)
   def _wrapper(self, *args, **kwargs):
-    if backend.get_backend() != backend.JAX:
+    if not self._is_on_jax:
       return fn(self, *args, **kwargs)
 
   return _wrapper
@@ -130,9 +130,11 @@ class GenCovTest(real_tf.test.TestCase):
 
 class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
 
+  _is_on_jax = False
+
   def setUp(self):
     super(FunMCMCTestTensorFlow, self).setUp()
-    backend.set_backend(backend.TENSORFLOW)
+    backend.set_backend(backend.TENSORFLOW, backend.MANUAL_TRANSFORMS)
 
   def _make_seed(self, seed):
     return seed
@@ -140,12 +142,10 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
   def testTraceSingle(self):
 
     def fun(x):
-      if x is None:
-        x = 0.
       return x + 1., 2 * x
 
     x, e_trace = fun_mcmc.trace(
-        state=None, fn=fun, num_steps=5, trace_fn=lambda _, xp1: xp1)
+        state=0., fn=fun, num_steps=5, trace_fn=lambda _, xp1: xp1)
 
     self.assertAllEqual(5., x)
     self.assertAllEqual([0., 2., 4., 6., 8.], e_trace)
@@ -153,12 +153,10 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
   def testTraceNested(self):
 
     def fun(x, y):
-      if x is None:
-        x = 0.
       return (x + 1., y + 2.), ()
 
     (x, y), (x_trace, y_trace) = fun_mcmc.trace(
-        state=(None, 0.), fn=fun, num_steps=5, trace_fn=lambda xy, _: xy)
+        state=(0., 0.), fn=fun, num_steps=5, trace_fn=lambda xy, _: xy)
 
     self.assertAllEqual(5., x)
     self.assertAllEqual(10., y)
@@ -173,6 +171,15 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     x, trace = fun_mcmc.trace(0., fun, 2)
     self.assertAllEqual(4., x)
     self.assertAllEqual([2., 4.], trace)
+
+  def testTraceDynamic(self):
+
+    @tf.function
+    def trace_n(num_steps):
+      return fun_mcmc.trace(0, lambda x: (x + 1, ()), num_steps)[0]
+
+    x = trace_n(5)
+    self.assertAllEqual(5, x)
 
   def testTraceMask(self):
 
@@ -249,7 +256,6 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     with self.assertRaisesRegexp(TypeError, 'A common solution is to adjust'):
       fun_mcmc.call_transition_operator(potential, 0.)
 
-  @_skip_on_jax  # JAX backend cant' catch this error yet.
   def testCallTransitionOperatorBadArgs(self):
 
     def potential(x, y, z):
@@ -311,13 +317,13 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(lp, tlp)
 
   # The +1's here are because we initialize the `state_grads` at 1, which
-  # require an extra call to `target_log_prob_fn` for most integrators.
+  # require an extra call to `target_log_prob_fn`.
   @parameterized.parameters(
       (fun_mcmc.leapfrog_step, 1 + 1),
       (fun_mcmc.ruth4_step, 3 + 1),
       (fun_mcmc.blanes_3_stage_step, 3 + 1),
       (_fwd_mclachlan_optimal_4th_order_step, 4 + 1, 9),
-      (_rev_mclachlan_optimal_4th_order_step, 4, 9),
+      (_rev_mclachlan_optimal_4th_order_step, 4 + 1, 9),
   )
   def testIntegratorStep(self, method, num_tlp_calls, num_tlp_calls_jax=None):
 
@@ -330,14 +336,20 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     def kinetic_energy_fn(p):
       return tf.abs(p)**3., 2.
 
+    state = 1.
+    _, _, state_grads = fun_mcmc.call_potential_fn_with_grads(
+        target_log_prob_fn,
+        state,
+    )
+
     state, extras = method(
         integrator_step_state=fun_mcmc.IntegratorStepState(
-            state=1., state_grads=None, momentum=2.),
+            state=state, state_grads=state_grads, momentum=2.),
         step_size=0.1,
         target_log_prob_fn=target_log_prob_fn,
         kinetic_energy_fn=kinetic_energy_fn)
 
-    if num_tlp_calls_jax is not None and backend.get_backend() == backend.JAX:
+    if num_tlp_calls_jax is not None and self._is_on_jax:
       num_tlp_calls = num_tlp_calls_jax
     self.assertEqual(num_tlp_calls, tlp_call_counter[0])
     self.assertEqual(1., extras.state_extra)
@@ -364,10 +376,16 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
 
     seed = self._make_seed(_test_seed())
 
+    state = 1.
+    _, _, state_grads = fun_mcmc.call_potential_fn_with_grads(
+        target_log_prob_fn,
+        state,
+    )
+
     state_fwd, _ = method(
         integrator_step_state=fun_mcmc.IntegratorStepState(
-            state=1.,
-            state_grads=None,
+            state=state,
+            state_grads=state_grads,
             momentum=util.random_normal([], tf.float32, seed)),
         step_size=0.1,
         target_log_prob_fn=target_log_prob_fn,
@@ -379,7 +397,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
         target_log_prob_fn=target_log_prob_fn,
         kinetic_energy_fn=kinetic_energy_fn)
 
-    self.assertAllClose(1., state_rev.state, atol=1e-6)
+    self.assertAllClose(state, state_rev.state, atol=1e-6)
 
   def testMclachlanIntegratorStepReversible(self):
 
@@ -391,10 +409,16 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
 
     seed = self._make_seed(_test_seed())
 
+    state = 1.
+    _, _, state_grads = fun_mcmc.call_potential_fn_with_grads(
+        target_log_prob_fn,
+        state,
+    )
+
     state_fwd, _ = _fwd_mclachlan_optimal_4th_order_step(
         integrator_step_state=fun_mcmc.IntegratorStepState(
-            state=1.,
-            state_grads=None,
+            state=state,
+            state_grads=state_grads,
             momentum=util.random_normal([], tf.float32, seed)),
         step_size=0.1,
         target_log_prob_fn=target_log_prob_fn,
@@ -406,7 +430,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
         target_log_prob_fn=target_log_prob_fn,
         kinetic_energy_fn=kinetic_energy_fn)
 
-    self.assertAllClose(1., state_rev.state, atol=1e-6)
+    self.assertAllClose(state, state_rev.state, atol=1e-6)
 
   def testMetropolisHastingsStep(self):
     seed = self._make_seed(_test_seed())
@@ -427,12 +451,12 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllEqual(False, mh_extra.is_accepted)
 
     accepted, mh_extra = fun_mcmc.metropolis_hastings_step(
-        current_state=None, proposed_state=1., energy_change=np.nan, seed=seed)
-    self.assertAllEqual(1., accepted)
+        current_state=0., proposed_state=1., energy_change=np.nan, seed=seed)
+    self.assertAllEqual(0., accepted)
     self.assertAllEqual(False, mh_extra.is_accepted)
 
     accepted, mh_extra = fun_mcmc.metropolis_hastings_step(
-        current_state=None,
+        current_state=0.,
         proposed_state=1.,
         log_uniform=-10.,
         energy_change=-np.log(0.5),
@@ -441,12 +465,12 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllEqual(True, mh_extra.is_accepted)
 
     accepted, mh_extra = fun_mcmc.metropolis_hastings_step(
-        current_state=None,
+        current_state=0.,
         proposed_state=1.,
         log_uniform=0.,
         energy_change=-np.log(0.5),
         seed=seed)
-    self.assertAllEqual(1., accepted)
+    self.assertAllEqual(0., accepted)
     self.assertAllEqual(False, mh_extra.is_accepted)
 
     accepted, _ = fun_mcmc.metropolis_hastings_step(
@@ -485,7 +509,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
           (x - base_mean) / base_scale), -1), ()
 
     def kernel(hmc_state, seed):
-      if backend.get_backend() == backend.TENSORFLOW:
+      if not self._is_on_jax:
         hmc_seed = _test_seed()
       else:
         hmc_seed, seed = util.split_seed(seed, 2)
@@ -497,7 +521,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
           seed=hmc_seed)
       return (hmc_state, seed), hmc_extra
 
-    if backend.get_backend() == backend.TENSORFLOW:
+    if not self._is_on_jax:
       seed = _test_seed()
     else:
       seed = self._make_seed(_test_seed())
@@ -505,7 +529,8 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     # Subtle: Unlike TF, JAX needs a data dependency from the inputs to outputs
     # for the jit to do anything.
     _, chain = tf.function(lambda state, seed: fun_mcmc.trace(  # pylint: disable=g-long-lambda
-        state=(fun_mcmc.HamiltonianMonteCarloState(state), seed),
+        state=(fun_mcmc.hamiltonian_monte_carlo_init(state, target_log_prob_fn),
+               seed),
         fn=kernel,
         num_steps=num_steps,
         trace_fn=lambda state, extra: state[0].state))(state, seed)
@@ -554,7 +579,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
         seed=_test_seed()))
 
     _, chain = fun_mcmc.trace(
-        state=fun_mcmc.HamiltonianMonteCarloState(state),
+        state=fun_mcmc.hamiltonian_monte_carlo_init(state, target_log_prob_fn),
         fn=kernel,
         num_steps=num_steps,
         trace_fn=lambda state, extra: state.state_extra[0])
@@ -572,7 +597,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(true_mean, sample_mean, rtol=0.1, atol=0.1)
     self.assertAllClose(true_cov, sample_cov, rtol=0.1, atol=0.1)
 
-  @parameterized.parameters((tf.function, 1), (_no_compile, 3))
+  @parameterized.parameters((tf.function, 1), (_no_compile, 2))
   @_skip_on_jax  # `trace` doesn't have an efficient path in JAX yet.
   def testHMCCountTargetLogProb(self, compile_fn, expected_count):
 
@@ -594,7 +619,8 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
           seed=_test_seed())
 
       fun_mcmc.trace(
-          state=fun_mcmc.HamiltonianMonteCarloState(tf.zeros([1])),
+          state=fun_mcmc.hamiltonian_monte_carlo_init(
+              tf.zeros([1]), target_log_prob_fn),
           fn=kernel,
           num_steps=4,
           trace_fn=lambda *args: ())
@@ -682,7 +708,8 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
                 (hmc_state.state_extra[0], hmc_extra.log_accept_ratio))
 
       _, (chain, log_accept_ratio_trace) = fun_mcmc.trace(
-          state=(fun_mcmc.HamiltonianMonteCarloState(state),
+          state=(fun_mcmc.hamiltonian_monte_carlo_init(state,
+                                                       target_log_prob_fn),
                  fun_mcmc.adam_init(tf.math.log(step_size)), 0),
           fn=kernel,
           num_steps=num_adapt_steps + num_steps,
@@ -716,37 +743,6 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     new_control = fun_mcmc.sign_adaptation(
         control=1., output=0.5, set_point=0., adaptation_rate=0.1)
     self.assertAllClose(new_control, 1. * 1.1)
-
-  def testWrapTransitionKernel(self):
-
-    class TestKernel(tfp.mcmc.TransitionKernel):
-
-      def one_step(self, current_state, previous_kernel_results):
-        return [x + 1 for x in current_state], previous_kernel_results + 1
-
-      def bootstrap_results(self, current_state):
-        return sum(current_state)
-
-      def is_calibrated(self):
-        return True
-
-    def kernel(state, pkr):
-      return fun_mcmc.transition_kernel_wrapper(state, pkr, TestKernel())
-
-    (final_state, final_kr), _ = fun_mcmc.trace(
-        ({
-            'x': 0.,
-            'y': 1.
-        }, None),
-        kernel,
-        2,
-        trace_fn=lambda *args: (),
-    )
-    self.assertAllEqual({
-        'x': 2.,
-        'y': 3.
-    }, util.map_tree(np.array, final_state))
-    self.assertAllEqual(1. + 2., final_kr)
 
   def testRaggedIntegrator(self):
 
@@ -840,6 +836,29 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(2., y[-1], atol=1e-3)
     self.assertAllClose(0., loss[-1], atol=1e-3)
 
+  def testSimpleDualAverages(self):
+
+    def loss_fn(x, y):
+      return tf.square(x - 1.) + tf.square(y - 2.), []
+
+    def kernel(sda_state, rms_state):
+      sda_state, _ = fun_mcmc.simple_dual_averages_step(sda_state, loss_fn, 1.)
+      rms_state, _ = fun_mcmc.running_mean_step(rms_state, sda_state.state)
+      return (sda_state, rms_state), rms_state.mean
+
+    _, (x, y) = fun_mcmc.trace(
+        (
+            fun_mcmc.simple_dual_averages_init([tf.zeros([]),
+                                                tf.zeros([])]),
+            fun_mcmc.running_mean_init([[], []], [tf.float32, tf.float32]),
+        ),
+        kernel,
+        num_steps=1000,
+    )
+
+    self.assertAllClose(1., x[-1], atol=1e-1)
+    self.assertAllClose(2., y[-1], atol=1e-1)
+
   def testRandomWalkMetropolis(self):
     num_steps = 1000
     state = tf.ones([16], dtype=tf.int32)
@@ -857,7 +876,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
       return tf.cast(proposal, x.dtype), ((), proposed_logits - current_logits)
 
     def kernel(rwm_state, seed):
-      if backend.get_backend() == backend.TENSORFLOW:
+      if not self._is_on_jax:
         rwm_seed = _test_seed()
       else:
         rwm_seed, seed = util.split_seed(seed, 2)
@@ -868,7 +887,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
           seed=rwm_seed)
       return (rwm_state, seed), rwm_extra
 
-    if backend.get_backend() == backend.TENSORFLOW:
+    if not self._is_on_jax:
       seed = _test_seed()
     else:
       seed = self._make_seed(_test_seed())
@@ -1115,7 +1134,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
         return tf.reduce_sum(lp, -1), ()
 
     def kernel(hmc_state, raac_state, seed):
-      if backend.get_backend() == backend.TENSORFLOW:
+      if not self._is_on_jax:
         hmc_seed = _test_seed()
       else:
         hmc_seed, seed = util.split_seed(seed, 2)
@@ -1129,7 +1148,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
           raac_state, hmc_state.state, axis=aggregation)
       return (hmc_state, raac_state, seed), hmc_extra
 
-    if backend.get_backend() == backend.TENSORFLOW:
+    if not self._is_on_jax:
       seed = _test_seed()
     else:
       seed = self._make_seed(_test_seed())
@@ -1138,7 +1157,7 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     # for the jit to do anything.
     (_, raac_state, _), chain = tf.function(lambda state, seed: fun_mcmc.trace(  # pylint: disable=g-long-lambda
         state=(
-            fun_mcmc.HamiltonianMonteCarloState(state),
+            fun_mcmc.hamiltonian_monte_carlo_init(state, target_log_prob_fn),
             fun_mcmc.running_approximate_auto_covariance_init(
                 max_lags=max_lags,
                 state_shape=state_shape,
@@ -1198,16 +1217,49 @@ class FunMCMCTestTensorFlow(real_tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(2., extra)
     self.assertAllClose(3., grads)
 
+  @parameterized.named_parameters(
+      ('Probability', True),
+      ('Loss', False),
+  )
+  def testReparameterizeFn(self, track_volume):
+
+    def potential_fn(x, y):
+      return -x**2 + -y**2, ()
+
+    def transport_map_fn(x, y):
+      return [2 * x, 3 * y], ((), tf.math.log(2.) + tf.math.log(3.))
+
+    def inverse_map_fn(x, y):
+      return [x / 2, y / 3], ((), -tf.math.log(2.) - tf.math.log(3.))
+
+    transport_map_fn.inverse = inverse_map_fn
+
+    (transformed_potential_fn,
+     transformed_init_state) = fun_mcmc.reparameterize_potential_fn(
+         potential_fn, transport_map_fn, [2., 3.], track_volume=track_volume)
+
+    self.assertIsInstance(transformed_init_state, list)
+    self.assertAllClose([1., 1.], transformed_init_state)
+    transformed_potential, (orig_space, _, _) = transformed_potential_fn(1., 1.)
+    potential = potential_fn(2., 3.)[0]
+    if track_volume:
+      potential += tf.math.log(2.) + tf.math.log(3.)
+
+    self.assertAllClose([2., 3.], orig_space)
+    self.assertAllClose(potential, transformed_potential)
+
 
 class FunMCMCTestJAX(FunMCMCTestTensorFlow):
 
+  _is_on_jax = True
+
   def setUp(self):
     super(FunMCMCTestJAX, self).setUp()
-    backend.set_backend(backend.JAX)
+    backend.set_backend(backend.JAX, backend.MANUAL_TRANSFORMS)
 
   def _make_seed(self, seed):
     return jax_random.PRNGKey(seed)
 
 
 if __name__ == '__main__':
-  tf.test.main()
+  real_tf.test.main()

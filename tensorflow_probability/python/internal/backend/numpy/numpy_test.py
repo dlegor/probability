@@ -34,6 +34,7 @@ import six
 import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf
 
+from tensorflow_probability.python.internal import hypothesis_testlib as tfp_hps
 from tensorflow_probability.python.internal import test_util
 from tensorflow_probability.python.internal.backend import numpy as numpy_backend
 
@@ -42,6 +43,12 @@ ALLOW_NAN = False
 ALLOW_INFINITY = False
 
 JAX_MODE = False
+
+
+class Kwargs(dict):
+  """Sentinel to indicate a single item arg is actually a **kwargs."""
+  # See usage with raw_ops.MatrixDiagPartV2.
+  pass
 
 
 def _add_jax_prng_key_as_seed():
@@ -59,6 +66,7 @@ class TestCase(dict):
 
   def __init__(self, name, strategy_list, **kwargs):
     self.name = name
+
     super(TestCase, self).__init__(
         testcase_name='_' + name.replace('.', '_'),
         tensorflow_function=_getattr(tf, name),
@@ -80,6 +88,10 @@ def floats(min_value=-1e16,
            allow_nan=ALLOW_NAN,
            allow_infinity=ALLOW_INFINITY):
   return hps.floats(min_value, max_value, allow_nan, allow_infinity)
+
+
+def integers(min_value=-2**30, max_value=2**30):
+  return hps.integers(min_value, max_value)
 
 
 def complex_numbers(min_magnitude=0.,
@@ -114,7 +126,7 @@ def fft_shapes(fft_dim):
 
 @hps.composite
 def n_same_shape(draw, n, shape=shapes(), dtype=None, elements=None,
-                 as_tuple=True, batch_shape=()):
+                 as_tuple=True, batch_shape=(), unique=False):
   if elements is None:
     elements = floats()
   if dtype is None:
@@ -124,10 +136,12 @@ def n_same_shape(draw, n, shape=shapes(), dtype=None, elements=None,
   ensure_array = lambda x: onp.array(x, dtype=dtype)
   if isinstance(elements, (list, tuple)):
     return tuple([
-        draw(hnp.arrays(dtype, shape, elements=e).map(ensure_array))
+        draw(hnp.arrays(
+            dtype, shape, unique=unique, elements=e).map(ensure_array))
         for e in elements
     ])
-  array_strategy = hnp.arrays(dtype, shape, elements=elements).map(ensure_array)
+  array_strategy = hnp.arrays(
+      dtype, shape, unique=unique, elements=elements).map(ensure_array)
   if n == 1 and not as_tuple:
     return draw(array_strategy)
   return draw(hps.tuples(*([array_strategy] * n)))
@@ -219,6 +233,62 @@ def nonsingular_matrices(draw):
   return mat * signs
 
 
+@hps.composite
+def batched_probabilities(draw, batch_shape, num_classes):
+  probs = draw(single_arrays(
+      batch_shape=batch_shape,
+      shape=hps.just((num_classes,)),
+      dtype=np.float32, elements=floats()))
+  probs = onp.exp(probs - onp.max(
+      probs, axis=-1, keepdims=True))
+  return probs / probs.sum(keepdims=True, axis=-1)
+
+
+def tensorshapes_to_tuples(tensorshapes):
+  return tuple(tuple(tensorshape.as_list()) for tensorshape in tensorshapes)
+
+
+@hps.composite
+def normal_params(draw):
+  shape = draw(shapes())
+  arg_shapes = draw(
+      tfp_hps.broadcasting_shapes(shape, 3).map(tensorshapes_to_tuples))
+  include_arg = draw(hps.lists(hps.booleans(), min_size=2, max_size=2))
+  dtype = draw(hps.sampled_from([np.float32, np.float64]))
+  mean = (
+      draw(single_arrays(shape=hps.just(arg_shapes[1]), dtype=dtype,
+                         elements=floats()))
+      if include_arg[0] else 0)
+  stddev = (
+      draw(single_arrays(shape=hps.just(arg_shapes[2]), dtype=dtype,
+                         elements=positive_floats()))
+      if include_arg[1] else 1)
+  return (arg_shapes[0], mean, stddev, dtype)
+
+
+@hps.composite
+def uniform_params(draw):
+  shape = draw(shapes())
+  arg_shapes = draw(
+      tfp_hps.broadcasting_shapes(shape, 3).map(tensorshapes_to_tuples))
+  include_arg = draw(hps.lists(hps.booleans(), min_size=2, max_size=2))
+  dtype = draw(hps.sampled_from([np.int32, np.int64, np.float32, np.float64]))
+  elements = floats(), positive_floats()
+  if dtype == np.int32 or dtype == np.int64:
+    # TF RandomUniformInt only supports scalar min/max.
+    arg_shapes = (arg_shapes[0], (), ())
+    elements = integers(), integers(min_value=1)
+  minval = (
+      draw(single_arrays(shape=hps.just(arg_shapes[1]), dtype=dtype,
+                         elements=elements[0]))
+      if include_arg[0] else 0)
+  maxval = minval + (
+      draw(single_arrays(shape=hps.just(arg_shapes[2]), dtype=dtype,
+                         elements=elements[1]))
+      if include_arg[1] else dtype(10))
+  return (arg_shapes[0], minval, maxval, dtype)
+
+
 def gamma_params():
   def dict_to_params(d):
     return (d['shape'],  # sample shape
@@ -238,6 +308,52 @@ def gamma_params():
 
 
 @hps.composite
+def bincount_params(draw):
+  num_buckets = draw(hps.integers(2, 20))
+  minlength = draw(hps.one_of(
+      hps.just(None),
+      hps.integers(num_buckets, num_buckets + 3),
+  ))
+  arr = draw(single_arrays(dtype=np.int32,
+                           shape=hps.just(tuple()),
+                           batch_shape=(num_buckets,),
+                           elements=hps.integers(
+                               0, num_buckets - 1)))
+  weights = draw(hps.one_of(
+      hps.just(None),
+      single_arrays(dtype=np.int32,
+                    shape=hps.just(tuple()),
+                    batch_shape=(num_buckets,),
+                    elements=hps.integers(0, 4))))
+  return arr, weights, minlength
+
+
+@hps.composite
+def confusion_matrix_params(draw):
+  num_labels = draw(hps.integers(1, 8))
+  labels = draw(single_arrays(
+      dtype=np.int32,
+      shape=hps.just(tuple()),
+      batch_shape=(num_labels,),
+      elements=hps.integers(0, num_labels - 1)))
+  predictions = draw(single_arrays(
+      dtype=np.int32,
+      shape=hps.just(tuple()),
+      batch_shape=(num_labels,),
+      elements=hps.integers(0, num_labels - 1)))
+  num_classes = draw(hps.one_of(
+      hps.just(None),
+      hps.integers(num_labels, num_labels + 3)))
+  weights = draw(hps.one_of(
+      hps.just(None),
+      single_arrays(dtype=np.int32,
+                    shape=hps.just(tuple()),
+                    batch_shape=(num_labels,),
+                    elements=hps.integers(0, 4))))
+  return labels, predictions, num_classes, weights
+
+
+@hps.composite
 def gather_params(draw):
   params_shape = shapes(min_dims=1)
   params = draw(single_arrays(shape=params_shape))
@@ -251,7 +367,7 @@ def gather_params(draw):
       hps.integers(-rank + batch_dims, -1),
   ))
   elements = hps.integers(0, params.shape[axis] - 1)
-  indices_shape = shapes(min_dims=0)
+  indices_shape = shapes(min_dims=batch_dims + 1)
   batch_shape = params.shape[:batch_dims]
   indices = draw(single_arrays(dtype=np.int32, elements=elements,
                                shape=indices_shape,
@@ -295,13 +411,86 @@ def gather_nd_params(draw):
   return params, indices, batch_dims, None
 
 
+@hps.composite
+def searchsorted_params(draw):
+  sorted_array_shape = shapes(min_dims=1)
+  sorted_array = draw(single_arrays(shape=sorted_array_shape))
+  sorted_array = np.sort(sorted_array)
+  num_values = hps.integers(1, 20)
+  values = draw(single_arrays(
+      shape=shapes(min_dims=1, max_dims=1, max_side=draw(num_values)),
+      batch_shape=sorted_array.shape[:-1]))
+  search_side = draw(hps.one_of(hps.just('left'), hps.just('right')))
+  return sorted_array, values, search_side
+
+
+@hps.composite
+def top_k_params(draw):
+  array_shape = shapes(min_dims=1)
+  # TODO(srvasude): The unique check can be removed once
+  # https://github.com/google/jax/issues/2124 is resolved.
+  array = draw(single_arrays(unique=True, shape=array_shape))
+  k = draw(hps.integers(1, int(array.shape[-1])))
+  return array, k
+
+
+@hps.composite
+def histogram_fixed_width_bins_params(draw):
+  values = draw(single_arrays(
+      dtype=np.float32,
+      shape=shapes(min_dims=1),
+      elements=hps.floats(min_value=-1e5, max_value=1e5)
+  ))
+  vmin, vmax = np.min(values), np.max(values)
+  value_min = draw(hps.one_of(
+      hps.just(vmin),
+      hps.just(vmin - 3))).astype(np.float32)
+  value_max = draw(hps.one_of(
+      hps.just(vmax),
+      hps.just(vmax + 3))).astype(np.float32)
+  nbins = draw(hps.integers(2, 10))
+  return values, [value_min, value_max], nbins
+
+
+@hps.composite
+def sparse_xent_params(draw):
+  num_classes = draw(hps.integers(1, 6))
+  batch_shape = draw(shapes(min_dims=1))
+  labels = single_arrays(
+      batch_shape=batch_shape,
+      shape=hps.just(tuple()),
+      dtype=np.int32,
+      elements=hps.integers(0, num_classes - 1))
+  logits = single_arrays(
+      batch_shape=batch_shape,
+      shape=hps.just((num_classes,)),
+      elements=hps.floats(min_value=-1e5, max_value=1e5))
+  return draw(
+      hps.fixed_dictionaries(dict(
+          labels=labels, logits=logits)).map(Kwargs))
+
+
+@hps.composite
+def xent_params(draw):
+  num_classes = draw(hps.integers(1, 6))
+  batch_shape = draw(shapes(min_dims=1))
+  labels = batched_probabilities(  # pylint:disable=no-value-for-parameter
+      batch_shape=batch_shape, num_classes=num_classes)
+  logits = single_arrays(
+      batch_shape=batch_shape,
+      shape=hps.just((num_classes,)),
+      elements=hps.floats(min_value=-1e5, max_value=1e5))
+  return draw(
+      hps.fixed_dictionaries(dict(
+          labels=labels, logits=logits)).map(Kwargs))
+
+
 # __Currently untested:__
 # broadcast_dynamic_shape
 # broadcast_static_shape
 # broadcast_to
 # math.accumulate_n
 # math.betainc
-# math.bincount
 # math.igamma
 # math.igammac
 # math.lbeta
@@ -332,25 +521,51 @@ NUMPY_TEST_CASES = [
                             dtype=np.complex64,
                             elements=complex_numbers(max_magnitude=1e3))],
              atol=1e-3, rtol=1e-3),
-
+    TestCase('signal.rfft',
+             [single_arrays(shape=fft_shapes(fft_dim=1),
+                            dtype=np.float32,
+                            elements=floats(min_value=-1e3, max_value=1e3))],
+             atol=1e-4, rtol=1e-4),
+    TestCase('signal.rfft2d',
+             [single_arrays(shape=fft_shapes(fft_dim=2),
+                            dtype=np.float32,
+                            elements=floats(min_value=-1e3, max_value=1e3))],
+             atol=1e-4, rtol=1e-4),
+    TestCase('signal.rfft3d',
+             [single_arrays(shape=fft_shapes(fft_dim=3),
+                            dtype=np.float32,
+                            elements=floats(min_value=-1e3, max_value=1e3))],
+             atol=1e-3, rtol=1e-3),
     TestCase('signal.ifft',
              [single_arrays(shape=fft_shapes(fft_dim=1),
                             dtype=np.complex64,
                             elements=complex_numbers(max_magnitude=1e3))],
-             jax_disabled='https://github.com/google/jax/issues/1010',
              atol=1e-4, rtol=1e-4),
     TestCase('signal.ifft2d',
              [single_arrays(shape=fft_shapes(fft_dim=2),
                             dtype=np.complex64,
                             elements=complex_numbers(max_magnitude=1e3))],
-             jax_disabled='https://github.com/google/jax/issues/1010',
              atol=1e-4, rtol=1e-4),
     TestCase('signal.ifft3d',
              [single_arrays(shape=fft_shapes(fft_dim=3),
                             dtype=np.complex64,
                             elements=complex_numbers(max_magnitude=1e3))],
-             jax_disabled='https://github.com/google/jax/issues/1010',
              atol=1e-4, rtol=1e-4),
+    TestCase('signal.irfft',
+             [single_arrays(shape=fft_shapes(fft_dim=1),
+                            dtype=np.complex64,
+                            elements=complex_numbers(max_magnitude=1e3))],
+             atol=2e-4, rtol=2e-4),
+    TestCase('signal.irfft2d',
+             [single_arrays(shape=fft_shapes(fft_dim=2),
+                            dtype=np.complex64,
+                            elements=complex_numbers(max_magnitude=1e3))],
+             atol=2e-4, rtol=2e-4),
+    TestCase('signal.irfft3d',
+             [single_arrays(shape=fft_shapes(fft_dim=3),
+                            dtype=np.complex64,
+                            elements=complex_numbers(max_magnitude=1e3))],
+             atol=2e-4, rtol=2e-4),
 
     # ArgSpec(args=['a', 'b', 'transpose_a', 'transpose_b', 'adjoint_a',
     #               'adjoint_b', 'a_is_sparse', 'b_is_sparse', 'name'],
@@ -363,6 +578,7 @@ NUMPY_TEST_CASES = [
     # ArgSpec(args=['a', 'name', 'conjugate'], varargs=None, keywords=None)
     TestCase('linalg.matrix_transpose',
              [single_arrays(shape=shapes(min_dims=2))]),
+    TestCase('linalg.trace', [nonsingular_matrices()]),
 
     # ArgSpec(args=['a', 'x', 'name'], varargs=None, keywords=None,
     #         defaults=(None,))
@@ -377,7 +593,9 @@ NUMPY_TEST_CASES = [
     #         varargs=None,
     #         keywords=None,
     #         defaults=(None, None, None, tf.int32, None))
-    TestCase('math.bincount', []),
+    TestCase('math.bincount', [bincount_params()]),
+    TestCase('math.confusion_matrix', [confusion_matrix_params()]),
+    TestCase('math.top_k', [top_k_params()]),
 
     # ArgSpec(args=['chol', 'rhs', 'name'], varargs=None, keywords=None,
     #         defaults=(None,))
@@ -422,6 +640,11 @@ NUMPY_TEST_CASES = [
     TestCase('linalg.cholesky', [pd_matrices()]),
     TestCase('linalg.lu', [nonsingular_matrices()]),
     TestCase('linalg.diag_part', [single_arrays(shape=shapes(min_dims=2))]),
+    TestCase('raw_ops.MatrixDiagPartV2', [
+        hps.fixed_dictionaries(dict(
+            input=single_arrays(shape=shapes(min_dims=2, min_side=2)),
+            k=hps.sampled_from([-1, 0, 1]),
+            padding_value=hps.just(0.))).map(Kwargs)]),
     TestCase('identity', [single_arrays()]),
 
     # ArgSpec(args=['input', 'num_lower', 'num_upper', 'name'], varargs=None,
@@ -532,6 +755,8 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
                             dtype=np.complex64, elements=complex_numbers())]),
     TestCase('linalg.slogdet', [nonsingular_matrices()]),
     # ArgSpec(args=['x', 'name'], varargs=None, keywords=None, defaults=(None,))
+    TestCase('complex', [n_same_shape(n=2, dtype=np.float32),
+                         n_same_shape(n=2, dtype=np.float64)]),
     TestCase('math.abs', [single_arrays()]),
     TestCase('math.acos', [single_arrays(elements=floats(-1., 1.))]),
     TestCase('math.acosh', [single_arrays(elements=positive_floats())]),
@@ -543,14 +768,12 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
         'math.bessel_i0', [single_arrays(elements=floats(-50., 50.))],
         jax_disabled=True),
     TestCase(
-        'math.bessel_i0e', [single_arrays(elements=floats(-50., 50.))],
-        jax_disabled='https://github.com/google/jax/issues/1220'),
+        'math.bessel_i0e', [single_arrays(elements=floats(-50., 50.))]),
     TestCase(
         'math.bessel_i1', [single_arrays(elements=floats(-50., 50.))],
         jax_disabled=True),
     TestCase(
-        'math.bessel_i1e', [single_arrays(elements=floats(-50., 50.))],
-        jax_disabled='https://github.com/google/jax/issues/1220'),
+        'math.bessel_i1e', [single_arrays(elements=floats(-50., 50.))]),
     TestCase('math.ceil', [single_arrays()]),
     TestCase('math.conj',
              [single_arrays(dtype=np.complex64, elements=complex_numbers())]),
@@ -560,8 +783,9 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
              [single_arrays(elements=non_zero_floats(-1e4, 1e4))]),
     TestCase('math.erf', [single_arrays()]),
     TestCase('math.erfc', [single_arrays()]),
-    TestCase('math.exp',
-             [single_arrays(elements=floats(min_value=-1e3, max_value=1e3))]),
+    TestCase('math.erfinv', [single_arrays(elements=floats(-1., 1.))]),
+    TestCase('math.exp',  # TODO(b/147394924): max_value=1e3
+             [single_arrays(elements=floats(min_value=-1e3, max_value=85))]),
     TestCase('math.expm1',
              [single_arrays(elements=floats(min_value=-1e3, max_value=1e3))]),
     TestCase('math.floor', [single_arrays()]),
@@ -576,6 +800,7 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
              [single_arrays(elements=floats(min_value=-100.))]),
     TestCase('math.logical_not',
              [single_arrays(dtype=np.bool, elements=hps.booleans())]),
+    TestCase('math.ndtri', [single_arrays(elements=floats(0., 1.))]),
     TestCase('math.negative', [single_arrays()]),
     TestCase('math.reciprocal', [single_arrays()]),
     TestCase('math.rint', [single_arrays()]),
@@ -605,6 +830,8 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
     TestCase('math.equal', [n_same_shape(n=2)]),
     TestCase('math.floordiv',
              [n_same_shape(n=2, elements=[floats(), non_zero_floats()])]),
+    TestCase('math.floormod',
+             [n_same_shape(n=2, elements=[floats(), non_zero_floats()])]),
     TestCase('math.greater', [n_same_shape(n=2)]),
     TestCase('math.greater_equal', [n_same_shape(n=2)]),
     TestCase('math.less', [n_same_shape(n=2)]),
@@ -632,6 +859,12 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
              [n_same_shape(n=2, elements=[floats(), non_zero_floats()])]),
     TestCase('math.xlogy',
              [n_same_shape(n=2, elements=[floats(), positive_floats()])]),
+    TestCase('math.xlog1py',
+             [n_same_shape(n=2, elements=[floats(), positive_floats()])]),
+    TestCase('nn.sparse_softmax_cross_entropy_with_logits',
+             [sparse_xent_params()], rtol=1e-4, atol=1e-4),
+    TestCase('nn.softmax_cross_entropy_with_logits',
+             [xent_params()], rtol=1e-4, atol=1e-4),
     TestCase(
         'random.categorical', [
             hps.tuples(
@@ -647,50 +880,72 @@ NUMPY_TEST_CASES += [  # break the array for pylint to not timeout.
         jax_kwargs=_add_jax_prng_key_as_seed,
         assert_shape_only=True),
     TestCase(
-        'random.normal', [hps.tuples(shapes())],
+        'random.normal', [normal_params()],
         jax_kwargs=_add_jax_prng_key_as_seed,
         assert_shape_only=True),
     TestCase(
-        'random.uniform', [hps.tuples(shapes())],
+        'random.uniform', [uniform_params()],
         jax_kwargs=_add_jax_prng_key_as_seed,
         assert_shape_only=True),
 
     # Array ops.
     TestCase('gather', [gather_params()]),
     TestCase('gather_nd', [gather_nd_params()]),
+    TestCase('searchsorted', [searchsorted_params()]),
     TestCase('one_hot', [one_hot_params()]),
     TestCase('slice', [sliceable_and_slices()]),
+
+    # Misc
+    TestCase('histogram_fixed_width_bins',
+             [histogram_fixed_width_bins_params()]),
 ]
 
 
 def _maybe_convert_to_tensors(args):
   # Ensures we go from JAX np -> original np -> tf.Tensor. (no-op for non-JAX.)
   convert = lambda a: tf.convert_to_tensor(onp.array(a))
-  return tuple(
-      convert(arg) if isinstance(arg, np.ndarray) else arg for arg in args)
+  return tf.nest.map_structure(
+      lambda arg: convert(arg) if isinstance(arg, np.ndarray) else arg,
+      args)
 
 
 class NumpyTest(test_util.TestCase):
 
-  def test_convert_to_tensor(self):
+  def _base_test_convert_to_tensor(self, nmpy):
     convert_to_tensor = numpy_backend.convert_to_tensor
     self.assertEqual(
-        np.complex64,
-        convert_to_tensor(np.complex64(1 + 2j), dtype_hint=tf.int32).dtype)
+        nmpy.complex64,
+        convert_to_tensor(nmpy.complex64(1 + 2j), dtype_hint=tf.int32).dtype)
     self.assertEqual(
-        np.complex64,
-        convert_to_tensor(np.complex64(1 + 2j), dtype_hint=tf.float64).dtype)
-    self.assertEqual(np.float64,
+        nmpy.complex64,
+        convert_to_tensor(nmpy.complex64(1 + 2j), dtype_hint=tf.float64).dtype)
+    self.assertEqual(nmpy.float64,
                      convert_to_tensor(1., dtype_hint=tf.int32).dtype)
-    self.assertEqual(np.int32, convert_to_tensor(1, dtype_hint=tf.int32).dtype)
-    self.assertEqual(np.float32,
-                     convert_to_tensor(1, dtype_hint=tf.float32).dtype)
-    self.assertEqual(np.complex64,
-                     convert_to_tensor(1., dtype_hint=tf.complex64).dtype)
-    self.assertEqual(np.int64, convert_to_tensor(1, dtype_hint=tf.int64).dtype)
     self.assertEqual(
-        np.int32,
-        convert_to_tensor(np.int32(False), dtype_hint=tf.bool).dtype)
+        nmpy.int32, convert_to_tensor(1, dtype_hint=tf.int32).dtype)
+    self.assertEqual(nmpy.float32,
+                     convert_to_tensor(1, dtype_hint=tf.float32).dtype)
+    self.assertEqual(nmpy.complex64,
+                     convert_to_tensor(1., dtype_hint=tf.complex64).dtype)
+    self.assertEqual(
+        nmpy.int64, convert_to_tensor(1, dtype_hint=tf.int64).dtype)
+    self.assertEqual(
+        nmpy.int32,
+        convert_to_tensor(nmpy.int32(False), dtype_hint=tf.bool).dtype)
+
+  def test_convert_to_tensor(self):
+    self._base_test_convert_to_tensor(np)
+
+  def test_convert_to_tensor_numpy_array(self):
+    if not JAX_MODE:
+      self.skipTest('Check non-device arrays in JAX.')
+    self._base_test_convert_to_tensor(onp)
+
+  def test_convert_to_tensor_scalar_default(self):
+    convert_to_tensor = numpy_backend.convert_to_tensor
+    self.assertEqual(np.complex128, convert_to_tensor(1. + 2j).dtype)
+    self.assertEqual(np.float32, convert_to_tensor(1.).dtype)
+    self.assertEqual(np.int32, convert_to_tensor(1).dtype)
 
   def test_convert_to_tensor_dimension(self):
     convert_to_tensor = numpy_backend.convert_to_tensor
@@ -763,9 +1018,15 @@ class NumpyTest(test_util.TestCase):
         # If `args` is a single item, put it in a tuple
         if isinstance(args, np.ndarray) or tf.is_tensor(args):
           args = (args,)
+        kwargs = {}
+        if isinstance(args, Kwargs):
+          kwargs = args
+          args = ()
         tensorflow_value = self.evaluate(
-            tf_fn(*_maybe_convert_to_tensors(args)))
-        kwargs = jax_kwargs() if JAX_MODE else {}
+            tf_fn(*_maybe_convert_to_tensors(args),
+                  **_maybe_convert_to_tensors(kwargs)))
+
+        kwargs.update(jax_kwargs() if JAX_MODE else {})
         numpy_value = np_fn(*args, **kwargs)
         if assert_shape_only:
 

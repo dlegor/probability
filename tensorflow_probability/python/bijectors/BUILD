@@ -19,8 +19,8 @@
 # [internal] load python3.bzl
 load(
     "//tensorflow_probability/python:build_defs.bzl",
-    "multi_substrate_py_library",
     "multi_substrate_py_test",
+    "multi_substrate_py_library",
 )
 
 licenses(["notice"])  # Apache 2.0
@@ -61,12 +61,14 @@ multi_substrate_py_library(
         ":ffjord",
         ":fill_scale_tril",
         ":fill_triangular",
+        ":generalized_pareto",
         ":gumbel_cdf",
         ":identity",
         ":inline",
         ":invert",
         ":iterated_sigmoid_centered",
         ":kumaraswamy_cdf",
+        ":lambertw_transform",
         ":masked_autoregressive",
         ":matrix_inverse_tril",
         ":normal_cdf",
@@ -86,6 +88,7 @@ multi_substrate_py_library(
         ":shift",
         ":sigmoid",
         ":sinh_arcsinh",
+        ":soft_clip",
         ":softfloor",
         ":softmax_centered",
         ":softplus",
@@ -122,7 +125,7 @@ py_test(
     name = "bijector_properties_test",
     size = "medium",
     srcs = ["bijector_properties_test.py"],
-    shard_count = 10,
+    shard_count = 20,
     tags = ["hypothesis"],
     deps = [
         ":categorical_to_discrete",
@@ -395,6 +398,21 @@ multi_substrate_py_library(
 )
 
 multi_substrate_py_library(
+    name = "generalized_pareto",
+    srcs = ["generalized_pareto.py"],
+    deps = [
+        ":bijector",
+        ":chain",
+        ":shift",
+        ":sigmoid",
+        ":softplus",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+    ],
+)
+
+multi_substrate_py_library(
     name = "gumbel_cdf",
     srcs = ["gumbel_cdf.py"],
     deps = [
@@ -443,6 +461,20 @@ multi_substrate_py_library(
         "//tensorflow_probability/python/internal:distribution_util",
         "//tensorflow_probability/python/internal:dtype_util",
         "//tensorflow_probability/python/internal:tensor_util",
+    ],
+)
+
+multi_substrate_py_library(
+    name = "lambertw_transform",
+    srcs = ["lambertw_transform.py"],
+    deps = [
+        ":bijector",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:distribution_util",
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+        "//tensorflow_probability/python/math",
     ],
 )
 
@@ -567,6 +599,7 @@ py_library(
     deps = [
         ":affine_scalar",
         ":bijector",
+        # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/internal:tensorshape_util",
     ],
@@ -618,6 +651,8 @@ multi_substrate_py_library(
     deps = [
         ":bijector",
         # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:tensor_util",
     ],
 )
 
@@ -626,11 +661,25 @@ multi_substrate_py_library(
     srcs = ["sinh_arcsinh.py"],
     deps = [
         ":bijector",
+        # absl/testing:parameterized dep,
         # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/internal:assert_util",
         "//tensorflow_probability/python/internal:dtype_util",
         "//tensorflow_probability/python/internal:tensor_util",
+    ],
+)
+
+multi_substrate_py_library(
+    name = "soft_clip",
+    srcs = ["soft_clip.py"],
+    deps = [
+        ":bijector",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+        "//tensorflow_probability/python/math",
     ],
 )
 
@@ -962,7 +1011,6 @@ multi_substrate_py_test(
     name = "categorical_to_discrete_test",
     size = "small",
     srcs = ["categorical_to_discrete_test.py"],
-    jax_tags = ["notap"],
     numpy_tags = ["notap"],
     deps = [
         ":bijector_test_util",
@@ -1022,8 +1070,14 @@ multi_substrate_py_test(
         ":bijectors",
         # numpy dep,
         # tensorflow dep,
+        "//tensorflow_probability/python/distributions:beta",
+        "//tensorflow_probability/python/distributions:cholesky_lkj",
         "//tensorflow_probability/python/distributions:lkj",
+        "//tensorflow_probability/python/distributions/internal:statistical_testing",
         "//tensorflow_probability/python/internal:test_util",
+        "//tensorflow_probability/python/mcmc:hmc",
+        "//tensorflow_probability/python/mcmc:sample",
+        "//tensorflow_probability/python/mcmc:transformed_kernel",
     ],
 )
 
@@ -1113,6 +1167,21 @@ multi_substrate_py_test(
 )
 
 multi_substrate_py_test(
+    name = "generalized_pareto_test",
+    size = "small",
+    srcs = ["generalized_pareto_test.py"],
+    jax_tags = ["notap"],
+    numpy_tags = ["notap"],
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
     name = "gumbel_cdf_test",
     size = "small",
     srcs = ["gumbel_cdf_test.py"],
@@ -1173,6 +1242,23 @@ multi_substrate_py_test(
     deps = [
         ":bijector_test_util",
         ":bijectors",
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "lambertw_transform_test",
+    size = "small",
+    srcs = ["lambertw_transform_test.py"],
+    jax_tags = ["notap"],
+    numpy_tags = ["notap"],
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        ":lambertw_transform",
+        # absl/testing:parameterized dep,
         # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/internal:test_util",
@@ -1266,7 +1352,6 @@ multi_substrate_py_test(
     name = "permute_test",
     size = "small",
     srcs = ["permute_test.py"],
-    jax_tags = ["notap"],
     numpy_tags = ["notap"],
     deps = [
         ":bijector_test_util",
@@ -1296,6 +1381,7 @@ py_test(
     srcs = ["real_nvp_test.py"],
     deps = [
         ":bijectors",
+        # absl/testing:parameterized dep,
         # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/distributions",
@@ -1340,7 +1426,6 @@ multi_substrate_py_test(
     name = "reshape_test",
     size = "small",
     srcs = ["reshape_test.py"],
-    jax_tags = ["notap"],
     deps = [
         ":bijector_test_util",
         ":bijectors",
@@ -1383,6 +1468,32 @@ multi_substrate_py_test(
     srcs = ["sinh_arcsinh_test.py"],
     jax_tags = ["notap"],
     tags = ["no_windows"],  # TODO: needs investigation on Windows.
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "soft_clip_test",
+    size = "small",
+    srcs = ["soft_clip_test.py"],
+    numpy_tags = ["notap"],  # TODO(b/149350565): remove this.
+    deps = [
+        ":bijectors",
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "softfloor_test",
+    size = "small",
+    srcs = ["softfloor_test.py"],
     deps = [
         ":bijector_test_util",
         ":bijectors",
@@ -1457,19 +1568,6 @@ multi_substrate_py_test(
         "//tensorflow_probability/python/internal:tensorshape_util",
         "//tensorflow_probability/python/internal:test_util",
         "//tensorflow_probability/python/math:gradient",
-    ],
-)
-
-multi_substrate_py_test(
-    name = "softfloor_test",
-    size = "small",
-    srcs = ["softfloor_test.py"],
-    deps = [
-        ":bijector_test_util",
-        ":bijectors",
-        # numpy dep,
-        # tensorflow dep,
-        "//tensorflow_probability/python/internal:test_util",
     ],
 )
 
@@ -1566,6 +1664,8 @@ exports_files(
         "fill_scale_tril_test.py",
         "fill_triangular.py",
         "fill_triangular_test.py",
+        "generalized_pareto.py",
+        "generalized_pareto_test.py",
         "gumbel.py",
         "gumbel_cdf.py",
         "gumbel_cdf_test.py",
@@ -1582,6 +1682,8 @@ exports_files(
         "kumaraswamy.py",
         "kumaraswamy_cdf.py",
         "kumaraswamy_cdf_test.py",
+        "lambertw_transform.py",
+        "lambertw_transform_test.py",
         "matrix_inverse_tril.py",
         "matrix_inverse_tril_test.py",
         "normal_cdf.py",
@@ -1608,7 +1710,9 @@ exports_files(
         "sigmoid_test.py",
         "sinh_arcsinh.py",
         "sinh_arcsinh_test.py",
+        "soft_clip.py",
         "softfloor.py",
+        "soft_clip_test.py",
         "softfloor_test.py",
         "softmax_centered.py",
         "softmax_centered_test.py",

@@ -18,11 +18,11 @@ from __future__ import print_function
 
 
 # Dependency imports
+from absl.testing import parameterized
 import numpy as np
 from scipy import special as sp_special
 from scipy import stats as sp_stats
 
-import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
 
@@ -254,7 +254,7 @@ class BetaTest(test_util.TestCase):
     n_val = 100
     seed = test_util.test_seed()
 
-    tf1.set_random_seed(seed)
+    tf.random.set_seed(seed)
     beta1 = tfd.Beta(
         concentration1=a_val,
         concentration0=b_val,
@@ -262,7 +262,7 @@ class BetaTest(test_util.TestCase):
         validate_args=True)
     samples1 = self.evaluate(beta1.sample(n_val, seed=seed))
 
-    tf1.set_random_seed(seed)
+    tf.random.set_seed(seed)
     beta2 = tfd.Beta(
         concentration1=a_val,
         concentration0=b_val,
@@ -286,28 +286,28 @@ class BetaTest(test_util.TestCase):
         sp_stats.beta.mean(a, b)[1, :],
         atol=1e-1)
 
-  def testBetaCdf(self):
+  @parameterized.parameters((np.float32, 5e-3), (np.float64, 1e-4))
+  def testBetaCdf(self, dt, rtol):
     shape = (30, 40, 50)
-    for dt in (np.float32, np.float64):
-      a = 10. * np.random.random(shape).astype(dt)
-      b = 10. * np.random.random(shape).astype(dt)
-      x = np.random.random(shape).astype(dt)
-      actual = self.evaluate(tfd.Beta(a, b, validate_args=True).cdf(x))
-      self.assertAllEqual(np.ones(shape, dtype=np.bool), 0. <= x)
-      self.assertAllEqual(np.ones(shape, dtype=np.bool), 1. >= x)
-      self.assertAllClose(sp_stats.beta.cdf(x, a, b), actual, rtol=1e-4, atol=0)
+    a = 10. * np.random.random(shape).astype(dt)
+    b = 10. * np.random.random(shape).astype(dt)
+    x = np.random.random(shape).astype(dt)
+    actual = self.evaluate(tfd.Beta(a, b, validate_args=True).cdf(x))
+    self.assertAllEqual(np.ones(shape, dtype=np.bool), 0. <= x)
+    self.assertAllEqual(np.ones(shape, dtype=np.bool), 1. >= x)
+    self.assertAllClose(sp_stats.beta.cdf(x, a, b), actual, rtol=rtol, atol=0)
 
-  def testBetaLogCdf(self):
+  @parameterized.parameters((np.float32, 5e-3), (np.float64, 1e-4))
+  def testBetaLogCdf(self, dt, rtol):
     shape = (30, 40, 50)
-    for dt in (np.float32, np.float64):
-      a = 10. * np.random.random(shape).astype(dt)
-      b = 10. * np.random.random(shape).astype(dt)
-      x = np.random.random(shape).astype(dt)
-      actual = self.evaluate(
-          tf.exp(tfd.Beta(a, b, validate_args=True).log_cdf(x)))
-      self.assertAllEqual(np.ones(shape, dtype=np.bool), 0. <= x)
-      self.assertAllEqual(np.ones(shape, dtype=np.bool), 1. >= x)
-      self.assertAllClose(sp_stats.beta.cdf(x, a, b), actual, rtol=1e-4, atol=0)
+    a = 10. * np.random.random(shape).astype(dt)
+    b = 10. * np.random.random(shape).astype(dt)
+    x = np.random.random(shape).astype(dt)
+    actual = self.evaluate(
+        tf.exp(tfd.Beta(a, b, validate_args=True).log_cdf(x)))
+    self.assertAllEqual(np.ones(shape, dtype=np.bool), 0. <= x)
+    self.assertAllEqual(np.ones(shape, dtype=np.bool), 1. >= x)
+    self.assertAllClose(sp_stats.beta.cdf(x, a, b), actual, rtol=rtol, atol=0)
 
   def testBetaBetaKL(self):
     for shape in [(10,), (4, 5)]:

@@ -44,7 +44,7 @@ class NormalTest(test_util.TestCase):
           prior=prior, scale=sigma, s=s, n=n)
 
       # Smoke test
-      self.assertTrue(isinstance(posterior, tfd.Normal))
+      self.assertIsInstance(posterior, tfd.Normal)
       posterior_log_pdf = self.evaluate(posterior.log_prob(x))
       self.assertEqual(posterior_log_pdf.shape, (6,))
 
@@ -63,7 +63,7 @@ class NormalTest(test_util.TestCase):
           prior=prior, scale=sigma, s=s, n=n)
 
       # Smoke test
-      self.assertTrue(isinstance(posterior, tfd.Normal))
+      self.assertIsInstance(posterior, tfd.Normal)
       posterior_log_pdf = self.evaluate(posterior.log_prob(x))
       self.assertEqual(posterior_log_pdf.shape, (6, 2))
 
@@ -84,7 +84,7 @@ class NormalTest(test_util.TestCase):
           prior=prior, scale=sigma, s=s, n=n)
 
       # Smoke test
-      self.assertTrue(isinstance(posterior, tfd.Normal))
+      self.assertIsInstance(posterior, tfd.Normal)
 
       # Calculate log_pdf under the 2 models
       posterior_log_pdf = posterior.log_prob(x)
@@ -105,7 +105,7 @@ class NormalTest(test_util.TestCase):
           prior=prior, scale=sigma, s=s, n=n)
 
       # Smoke test
-      self.assertTrue(isinstance(predictive, tfd.Normal))
+      self.assertIsInstance(predictive, tfd.Normal)
       predictive_log_pdf = self.evaluate(predictive.log_prob(x))
       self.assertEqual(predictive_log_pdf.shape, (6,))
 
@@ -116,7 +116,9 @@ class NormalTest(test_util.TestCase):
                                      likelihood_scale,
                                      observation,
                                      candidate_posterior_mean,
-                                     candidate_posterior_prec):
+                                     candidate_posterior_prec,
+                                     atol=1e-5,
+                                     rtol=1e-7):
     """Checks an MVN linear update against the naive dense computation."""
 
     # Do the test computation in float64, to ensure numerical stability.
@@ -153,9 +155,13 @@ class NormalTest(test_util.TestCase):
           tf.cast(posterior_mean, tf.float32),
           tf.cast(posterior_prec, tf.float32)))
 
-    self.assertAllClose(candidate_posterior_mean_, posterior_mean_, atol=1e-5)
-    self.assertAllClose(candidate_posterior_prec_, posterior_prec_, atol=1e-5)
+    self.assertAllClose(
+        candidate_posterior_mean_, posterior_mean_, atol=atol, rtol=rtol)
+    self.assertAllClose(
+        candidate_posterior_prec_, posterior_prec_, atol=atol, rtol=rtol)
 
+  @test_util.jax_disable_test_missing_functionality(
+      "JAX uses Gaussian elimination which leads to numerical instability.")
   def testMVNConjugateLinearUpdateSupportsBatchShape(self):
     strm = test_util.test_seed_stream()
     num_latents = 2
@@ -165,7 +171,7 @@ class NormalTest(test_util.TestCase):
     prior_mean = tf.ones([num_latents])
     prior_scale = tf.eye(num_latents) * 5.
     likelihood_scale = tf.linalg.LinearOperatorLowerTriangular(
-        tfb.ScaleTriL().forward(
+        tfb.FillScaleTriL().forward(
             tf.random.normal(
                 shape=batch_shape + [int(num_outputs * (num_outputs + 1) / 2)],
                 seed=strm())))
@@ -188,7 +194,8 @@ class NormalTest(test_util.TestCase):
         likelihood_scale=likelihood_scale.to_dense(),
         observation=observation,
         candidate_posterior_mean=posterior_mean,
-        candidate_posterior_prec=posterior_prec.to_dense())
+        candidate_posterior_prec=posterior_prec.to_dense(),
+        rtol=1e-5)
 
   def testMVNConjugateLinearUpdatePreservesStructuredLinops(self):
     strm = test_util.test_seed_stream()

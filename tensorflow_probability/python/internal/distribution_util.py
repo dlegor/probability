@@ -458,6 +458,25 @@ def assert_symmetric(matrix):
       [assert_util.assert_near(matrix, matrix_t)], matrix)
 
 
+def assert_nondecreasing(x, summarize=None, message=None, name=None):
+  """Assert (batched) elements in `x` are non decreasing."""
+
+  with tf.name_scope(name or 'assert_non_decreasing'):
+    if message is None:
+      message = '`Tensor` contained decreasing values.'
+    x = tf.convert_to_tensor(x)
+    x_ = tf.get_static_value(x)
+    if x_ is not None:
+      if not np.all(x_[..., :-1] <= x_[..., 1:]):
+        raise ValueError(message)
+      return x
+    return assert_util.assert_less_equal(
+        x[..., :-1],
+        x[..., 1:],
+        summarize=summarize,
+        message=message)
+
+
 def assert_nonnegative_integer_form(
     x, name='assert_nonnegative_integer_form'):
   """Assert x is a non-negative tensor, and optionally of integers."""
@@ -537,89 +556,6 @@ def maybe_get_static_value(x, dtype=None):
   if x_ is None or dtype is None:
     return x_
   return np.array(x_, dtype)
-
-
-def get_logits_and_probs(logits=None,
-                         probs=None,
-                         multidimensional=False,
-                         validate_args=False,
-                         name='get_logits_and_probs',
-                         dtype=None):
-  """Converts logit to probabilities (or vice-versa), and returns both.
-
-  Args:
-    logits: Floating-point `Tensor` representing log-odds.
-    probs: Floating-point `Tensor` representing probabilities.
-    multidimensional: Python `bool`, default `False`. If `True`, represents
-      whether the last dimension of `logits` or `probs`, a `[N1, N2, ...  k]`
-      dimensional tensor, representing the logit or probability of `shape[-1]`
-      classes.
-    validate_args: Python `bool`, default `False`. When `True`, either assert `0
-      <= probs <= 1` (if not `multidimensional`) or that the last dimension of
-      `probs` sums to one.
-    name: A name for this operation (optional).
-    dtype: `tf.DType` to prefer when converting args to `Tensor`s.
-
-  Returns:
-    logits, probs: Tuple of `Tensor`s. If `probs` has an entry that is `0` or
-      `1`, then the corresponding entry in the returned logit will be `-Inf` and
-      `Inf` respectively.
-
-  Raises:
-    ValueError: if neither `probs` nor `logits` were passed in, or both were.
-  """
-  if dtype is None:
-    dtype = dtype_util.common_dtype([probs, logits], dtype_hint=tf.float32)
-  with tf.name_scope(name):
-    if (probs is None) == (logits is None):
-      raise ValueError('Must pass probs or logits, but not both.')
-
-    if probs is None:
-      logits = tf.convert_to_tensor(logits, name='logits', dtype=dtype)
-      if not dtype_util.is_floating(logits.dtype):
-        raise TypeError('logits must having floating type.')
-      # We can early return since we constructed probs and therefore know
-      # they're valid.
-      if multidimensional:
-        if validate_args:
-          logits = embed_check_categorical_event_shape(logits)
-        return logits, tf.nn.softmax(logits, name='probs')
-      return logits, tf.sigmoid(logits, name='probs')
-
-    probs = tf.convert_to_tensor(probs, name='probs', dtype=dtype)
-    if not dtype_util.is_floating(probs.dtype):
-      raise TypeError('probs must having floating type.')
-
-    if validate_args:
-      with tf.name_scope('validate_probs'):
-        one = tf.constant(1., probs.dtype)
-        dependencies = [assert_util.assert_non_negative(probs)]
-        if multidimensional:
-          probs = embed_check_categorical_event_shape(probs)
-          dependencies += [
-              assert_util.assert_near(
-                  tf.reduce_sum(probs, axis=-1),
-                  one,
-                  message='probs does not sum to 1.')
-          ]
-        else:
-          dependencies += [
-              assert_util.assert_less_equal(
-                  probs, one, message='probs has components greater than 1.')
-          ]
-        probs = with_dependencies(dependencies, probs)
-
-    with tf.name_scope('logits'):
-      if multidimensional:
-        # Here we don't compute the multidimensional case, in a manner
-        # consistent with respect to the unidimensional case. We do so
-        # following the TF convention. Typically, you might expect to see
-        # logits = log(probs) - log(probs[pivot]). A side-effect of
-        # being consistent with the TF approach is that the unidimensional case
-        # implicitly handles the second dimension but the multidimensional case
-        # explicitly keeps the pivot dimension.
-        return tf.math.log(probs), probs
-      return tf.math.log(probs) - tf.math.log1p(-1. * probs), probs
 
 
 def _is_known_unsigned_by_dtype(dt):

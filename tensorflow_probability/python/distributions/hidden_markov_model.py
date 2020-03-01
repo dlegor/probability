@@ -312,7 +312,7 @@ class HiddenMarkovModel(distribution.Distribution):
       # the transition matrix must be square. But TensorFlow might
       # not know this so we explicitly tell it that the result has the
       # same shape.
-      result.set_shape(init_shape)
+      tensorshape_util.set_shape(result, init_shape)
       return result
 
     def _scan_multiple_steps():
@@ -1059,18 +1059,14 @@ class HiddenMarkovModel(distribution.Distribution):
             '`transition_distribution` and `observation_distribution` '
             'must agree on last dimension of batch size')
     elif self.validate_args:
-      if tf.compat.dimension_value(tdbs[-1]) is None:
-        tdbs = self.transition_distribution.batch_shape_tensor()
-      if tf.compat.dimension_value(odbs[-1]) is None:
-        odbs = self.observation_distribution.batch_shape_tensor()
+      tdbs = self.transition_distribution.batch_shape_tensor()
+      odbs = self.observation_distribution.batch_shape_tensor()
       transition_precondition = assert_util.assert_greater(
-          tf.size(self.transition_distribution.batch_shape_tensor()),
-          0,
+          tf.size(tdbs), 0,
           message=('`transition_distribution` can\'t have scalar '
                    'batches'))
       observation_precondition = assert_util.assert_greater(
-          tf.size(self.observation_distribution.batch_shape_tensor()),
-          0,
+          tf.size(odbs), 0,
           message=('`observation_distribution` can\'t have scalar '
                    'batches'))
       with tf.control_dependencies([

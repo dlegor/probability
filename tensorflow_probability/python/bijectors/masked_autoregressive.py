@@ -151,7 +151,7 @@ class MaskedAutoregressiveFlow(bijector_lib.Bijector):
   tfd = tfp.distributions
   tfb = tfp.bijectors
 
-  dims = 5
+  dims = 2
 
   # A common choice for a normalizing flow is to use a Gaussian for the base
   # distribution.  (However, any continuous distribution would work.) E.g.,
@@ -164,7 +164,8 @@ class MaskedAutoregressiveFlow(bijector_lib.Bijector):
 
   x = maf.sample()  # Expensive; uses `tf.while_loop`, no Bijector caching.
   maf.log_prob(x)   # Almost free; uses Bijector caching.
-  maf.log_prob(0.)  # Cheap; no `tf.while_loop` despite no Bijector caching.
+  # Cheap; no `tf.while_loop` despite no Bijector caching.
+  maf.log_prob(tf.zeros(dims))
 
   # [Papamakarios et al. (2016)][3] also describe an Inverse Autoregressive
   # Flow [(Kingma et al., 2016)][2]:
@@ -177,7 +178,8 @@ class MaskedAutoregressiveFlow(bijector_lib.Bijector):
 
   x = iaf.sample()  # Cheap; no `tf.while_loop` despite no Bijector caching.
   iaf.log_prob(x)   # Almost free; uses Bijector caching.
-  iaf.log_prob(0.)  # Expensive; uses `tf.while_loop`, no Bijector caching.
+  # Expensive; uses `tf.while_loop`, no Bijector caching.
+  iaf.log_prob(tf.zeros(dims))
 
   # In many (if not most) cases the default `shift_and_log_scale_fn` will be a
   # poor choice.  Here's an example of using a 'shift only' version and with a
@@ -294,33 +296,36 @@ class MaskedAutoregressiveFlow(bijector_lib.Bijector):
       ValueError: If both or none of `shift_and_log_scale_fn` and `bijector_fn`
           are specified.
     """
+    parameters = dict(locals())
     name = name or 'masked_autoregressive_flow'
-    self._unroll_loop = unroll_loop
-    self._event_ndims = event_ndims
-    if bool(shift_and_log_scale_fn) == bool(bijector_fn):
-      raise ValueError('Exactly one of `shift_and_log_scale_fn` and '
-                       '`bijector_fn` should be specified.')
-    if shift_and_log_scale_fn:
-      def _bijector_fn(x, **condition_kwargs):
-        params = shift_and_log_scale_fn(x, **condition_kwargs)
-        if tf.is_tensor(params):
-          shift, log_scale = tf.unstack(params, num=2, axis=-1)
-        else:
-          shift, log_scale = params
-        return affine_scalar.AffineScalar(shift=shift, log_scale=log_scale)
+    with tf.name_scope(name) as name:
+      self._unroll_loop = unroll_loop
+      self._event_ndims = event_ndims
+      if bool(shift_and_log_scale_fn) == bool(bijector_fn):
+        raise ValueError('Exactly one of `shift_and_log_scale_fn` and '
+                         '`bijector_fn` should be specified.')
+      if shift_and_log_scale_fn:
+        def _bijector_fn(x, **condition_kwargs):
+          params = shift_and_log_scale_fn(x, **condition_kwargs)
+          if tf.is_tensor(params):
+            shift, log_scale = tf.unstack(params, num=2, axis=-1)
+          else:
+            shift, log_scale = params
+          return affine_scalar.AffineScalar(shift=shift, log_scale=log_scale)
 
-      bijector_fn = _bijector_fn
+        bijector_fn = _bijector_fn
 
-    if validate_args:
-      bijector_fn = _validate_bijector_fn(bijector_fn)
-    # Still do this assignment for variable tracking.
-    self._shift_and_log_scale_fn = shift_and_log_scale_fn
-    self._bijector_fn = bijector_fn
-    super(MaskedAutoregressiveFlow, self).__init__(
-        forward_min_event_ndims=self._event_ndims,
-        is_constant_jacobian=is_constant_jacobian,
-        validate_args=validate_args,
-        name=name)
+      if validate_args:
+        bijector_fn = _validate_bijector_fn(bijector_fn)
+      # Still do this assignment for variable tracking.
+      self._shift_and_log_scale_fn = shift_and_log_scale_fn
+      self._bijector_fn = bijector_fn
+      super(MaskedAutoregressiveFlow, self).__init__(
+          forward_min_event_ndims=self._event_ndims,
+          is_constant_jacobian=is_constant_jacobian,
+          validate_args=validate_args,
+          parameters=parameters,
+          name=name)
 
   def _forward(self, x, **kwargs):
     static_event_size = tensorshape_util.num_elements(
@@ -620,7 +625,7 @@ class AutoregressiveNetwork(tf.keras.layers.Layer):
   for input dimension `i` depends only on inputs `x[batch_idx, j]` where
   `ord(j) < ord(i)`.  The autoregressive property allows us to use
   `output[batch_idx, i]` to parameterize conditional distributions:
-    `p(x[batch_idx, i] | x[batch_idx, ] for ord(j) < ord(i))`
+    `p(x[batch_idx, i] | x[batch_idx, j] for ord(j) < ord(i))`
   which give us a tractable distribution over input `x[batch_idx]`:
     `p(x[batch_idx]) = prod_i p(x[batch_idx, ord(i)] | x[batch_idx, ord(0:i)])`
 

@@ -99,7 +99,7 @@ class JointDistributionSequentialTest(test_util.TestCase):
     # We'll verify the shapes work as intended when we plumb these back into the
     # respective log_probs.
 
-    ds, _ = d.sample_distributions(value=xs)
+    ds, _ = d.sample_distributions(value=xs, seed=test_util.test_seed())
     self.assertLen(ds, 5)
     self.assertIsInstance(ds[0], tfd.Independent)
     self.assertIsInstance(ds[1], tfd.Gamma)
@@ -217,9 +217,7 @@ class JointDistributionSequentialTest(test_util.TestCase):
       getattr(d, attr)()
 
   @parameterized.parameters(
-      'quantile', 'log_cdf', 'cdf',
-      'log_survival_function', 'survival_function',
-  )
+      'log_cdf', 'cdf', 'log_survival_function', 'survival_function')
   def test_notimplemented_evaluative_statistic(self, attr):
     d = tfd.JointDistributionSequential([tfd.Normal(0., 1.),
                                          tfd.Bernoulli(probs=0.5)],
@@ -228,6 +226,15 @@ class JointDistributionSequentialTest(test_util.TestCase):
         NotImplementedError,
         attr + ' is not implemented: JointDistributionSequential'):
       getattr(d, attr)([0.]*len(d.model))
+
+  def test_notimplemented_quantile(self):
+    d = tfd.JointDistributionSequential([tfd.Normal(0., 1.),
+                                         tfd.Bernoulli(probs=0.5)],
+                                        validate_args=True)
+    with self.assertRaisesWithPredicateMatch(
+        NotImplementedError,
+        'quantile is not implemented: JointDistributionSequential'):
+      d.quantile(0.5)
 
   def test_copy(self):
     pgm = [tfd.Normal(0., 1.), tfd.Bernoulli(probs=0.5)]
@@ -342,8 +349,12 @@ class JointDistributionSequentialTest(test_util.TestCase):
 
     # Destructure vector-valued Tensors into Python lists, to mimic the values
     # a user might type.
+    def _convert_ndarray_to_list(x):
+      if isinstance(x, np.ndarray) and x.ndim > 0:
+        return list(x)
+      return x
     value = tf.nest.map_structure(
-        lambda x: list(x) if isinstance(x, np.ndarray) else x,
+        _convert_ndarray_to_list,
         self.evaluate(d.sample(seed=test_util.test_seed())))
     value_with_names = list(zip(d._flat_resolve_names(), value))
 
@@ -398,8 +409,64 @@ class JointDistributionSequentialTest(test_util.TestCase):
     lp = self.evaluate(joint.log_prob(x))
     lp_with_tensor_as_list = self.evaluate(
         joint.log_prob(x_with_tensor_as_list))
-    self.assertAllEqual(lp, lp_with_tensor_as_list)
+    self.assertAllClose(lp, lp_with_tensor_as_list, rtol=3e-7, atol=5e-7)
 
+  def test_matrix_factorization(self):
+    # A matrix factorization model based on
+    # Probabilistic Matrix Factorization by
+    # Ruslan Salakhutdinov and Andriy Mnih
+    # https://papers.nips.cc/paper/3208-probabilistic-matrix-factorization.pdf
+    #
+    #       users
+    # +-----3-+
+    # | U     |
+    # | | +-------+
+    # | | |   |   |
+    # | +-->R<--+ |
+    # |   |   | | |
+    # +---|---+ | |
+    #     |     V |
+    #     +-5-----+
+    #       items
+    n_users = 3
+    n_items = 5
+    n_factors = 2
+
+    user_trait_prior_scale = 10.
+    item_trait_prior_scale = 10.
+    observation_noise_prior_scale = 1.
+
+    dist = tfd.JointDistributionSequential([
+        tfd.Sample(tfd.Normal(loc=0.,
+                              scale=user_trait_prior_scale),
+                   sample_shape=[n_factors, n_users]),  # U
+
+        tfd.Sample(tfd.Normal(loc=0.,
+                              scale=item_trait_prior_scale),
+                   sample_shape=[n_factors, n_items]),  # V
+
+        lambda item_traits, user_traits: tfd.Independent(  # pylint: disable=g-long-lambda
+            tfd.Normal(loc=tf.matmul(user_traits, item_traits,  # R
+                                     adjoint_a=True),
+                       scale=observation_noise_prior_scale),
+            reinterpreted_batch_ndims=2)], validate_args=True)
+    self.assertAllEqual(dist.event_shape, [[2, 3], [2, 5], [3, 5]])
+
+    z = dist.sample(seed=test_util.test_seed())
+    self.assertAllEqual(tf.shape(z[0]), [2, 3])
+    self.assertAllEqual(tf.shape(z[1]), [2, 5])
+    self.assertAllEqual(tf.shape(z[2]), [3, 5])
+    lp = dist.log_prob(z)
+    self.assertEqual(lp.shape, [])
+
+    z = dist.sample((7, 9), seed=test_util.test_seed())
+    self.assertAllEqual(tf.shape(z[0]), [7, 9, 2, 3])
+    self.assertAllEqual(tf.shape(z[1]), [7, 9, 2, 5])
+    self.assertAllEqual(tf.shape(z[2]), [7, 9, 3, 5])
+    lp = dist.log_prob(z)
+    self.assertEqual(lp.shape, [7, 9])
+
+  @test_util.jax_disable_variable_test
   def test_latent_dirichlet_allocation(self):
     """Tests Latent Dirichlet Allocation joint model.
 
@@ -469,15 +536,16 @@ class JointDistributionSequentialTest(test_util.TestCase):
 
   def test_poisson_switchover_graphical_model(self):
     # Build a pretend dataset.
+    seed = test_util.test_seed_stream(salt='poisson')
     n = [43, 31]
     count_data = tf.cast(
         tf.concat([
-            tfd.Poisson(rate=15.).sample(n[0], seed=1),
-            tfd.Poisson(rate=25.).sample(n[1], seed=2),
+            tfd.Poisson(rate=15.).sample(n[0], seed=seed()),
+            tfd.Poisson(rate=25.).sample(n[1], seed=seed()),
         ], axis=0),
         dtype=tf.float32)
     count_data = self.evaluate(count_data)
-    n = np.sum(n).astype(np.float32)
+    n = np.sum(n)
 
     # Make model.
     gather = lambda tau, lambda_: tf.gather(  # pylint: disable=g-long-lambda
@@ -507,27 +575,91 @@ class JointDistributionSequentialTest(test_util.TestCase):
             joint.sample(batch_shape, seed=test_util.test_seed())).shape)
 
   def test_default_event_space_bijector(self):
-    joint = tfd.JointDistributionSequential(
-        [
-            tfd.Independent(tfd.Exponential(rate=[100, 120]), 1),
-            tfd.HalfNormal(2.5),
-            tfd.Exponential(2),
-        ],
-        validate_args=True)
-    self.assertTrue(isinstance(b, tfp.bijectors.Bijector)
-                    for b in joint._experimental_default_event_space_bijector())
+    dist_fns = [
+        tfd.LogNormal(0., 1., validate_args=True),
+        lambda h: tfd.Independent(  # pylint: disable=g-long-lambda
+            tfd.Uniform([0., 0.], h, validate_args=True)),
+        lambda s: tfd.Normal(0., s, validate_args=True)
+    ]
 
-    joint = tfd.JointDistributionSequential(
-        [
-            tfd.Independent(tfd.Exponential(rate=[100, 120]), 1),          # 0
-            lambda e: tfd.Gamma(concentration=e[..., 0], rate=e[..., 1]),  # 1
-            tfd.HalfNormal(2.5),                                           # 2
-        ],
-        validate_args=True)
+    jd = tfd.JointDistributionSequential(dist_fns, validate_args=True)
+    joint_bijector = jd._experimental_default_event_space_bijector()
 
-    with self.assertRaisesRegex(
-        NotImplementedError, 'all elements of `model` are `tfp.distribution`s'):
-      joint._experimental_default_event_space_bijector()
+    # define a sample in the unconstrained space and construct the component
+    # distributions
+    x = [tf.constant(w) for w in [-0.2, [0.3, 0.1], -1.]]
+    bijectors = []
+    y = []
+
+    b = dist_fns[0]._experimental_default_event_space_bijector()
+    bijectors.append(b)
+    y.append(b(x[0]))
+    for i in range(1, 3):
+      b = dist_fns[i](y[i - 1])._experimental_default_event_space_bijector()
+      y.append(b(x[i]))
+      bijectors.append(b)
+
+    # Test forward and inverse values.
+    self.assertAllClose(joint_bijector.forward(x), y)
+    self.assertAllClose(joint_bijector.inverse(y), x)
+
+    # Test forward log det Jacobian via finite differences.
+    event_ndims = [0, 1, 0]
+    delta = 0.01
+
+    fldj = joint_bijector.forward_log_det_jacobian(x, event_ndims)
+    forward_plus = [b.forward(x[i] + delta) for i, b in enumerate(bijectors)]
+    forward_minus = [b.forward(x[i] - delta) for i, b in enumerate(bijectors)]
+    fldj_fd = tf.reduce_sum(
+        [tf.reduce_sum(tf.math.log((p - m) / (2. * delta)))
+         for p, m in zip(forward_plus, forward_minus)])
+    self.assertAllClose(self.evaluate(fldj), self.evaluate(fldj_fd), rtol=1e-5)
+
+    # Test inverse log det Jacobian via finite differences.
+    delta = 0.001
+    y = [tf.constant(w) for w in [0.8, [0.4, 0.3], -0.05]]
+    ildj = joint_bijector.inverse_log_det_jacobian(y, event_ndims)
+
+    bijectors = []
+    bijectors.append(dist_fns[0]._experimental_default_event_space_bijector())
+    for i in range(1, 3):
+      bijectors.append(
+          dist_fns[i](y[i - 1])._experimental_default_event_space_bijector())
+
+    inverse_plus = [b.inverse(y[i] + delta) for i, b in enumerate(bijectors)]
+    inverse_minus = [b.inverse(y[i] - delta) for i, b in enumerate(bijectors)]
+    ildj_fd = tf.reduce_sum(
+        [tf.reduce_sum(tf.math.log((p - m) / (2. * delta)))
+         for p, m in zip(inverse_plus, inverse_minus)])
+    self.assertAllClose(self.evaluate(ildj), self.evaluate(ildj_fd), rtol=1e-4)
+
+    # test event shapes
+    event_shapes = [[2, None], [2], [4]]
+    self.assertAllEqual(
+        [shape.as_list()
+         for shape in joint_bijector.forward_event_shape(event_shapes)],
+        [bijectors[i].forward_event_shape(event_shapes[i]).as_list()
+         for i in range(3)])
+    self.assertAllEqual(
+        [shape.as_list()
+         for shape in joint_bijector.inverse_event_shape(event_shapes)],
+        [bijectors[i].inverse_event_shape(event_shapes[i]).as_list()
+         for i in range(3)])
+
+    event_shapes = [[3], [3, 2], []]
+    forward_joint_event_shape = joint_bijector.forward_event_shape_tensor(
+        event_shapes)
+    inverse_joint_event_shape = joint_bijector.inverse_event_shape_tensor(
+        event_shapes)
+    for i in range(3):
+      self.assertAllEqual(
+          self.evaluate(forward_joint_event_shape[i]),
+          self.evaluate(
+              bijectors[i].forward_event_shape_tensor(event_shapes[i])))
+      self.assertAllEqual(
+          self.evaluate(inverse_joint_event_shape[i]),
+          self.evaluate(
+              bijectors[i].inverse_event_shape_tensor(event_shapes[i])))
 
 
 class ResolveDistributionNamesTest(test_util.TestCase):
